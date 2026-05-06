@@ -1,26 +1,20 @@
 import { createFileRoute } from "@tanstack/react-router";
+import { FlowchartEditor } from "@/components/flowchart/FlowchartEditor";
 
 export const Route = createFileRoute("/")({
   component: Index,
+  head: () => ({
+    meta: [
+      { title: "FluxoLab — Criador de Fluxogramas ISO 5807" },
+      {
+        name: "description",
+        content:
+          "Ferramenta visual para criar fluxogramas seguindo a ISO 5807. Ideal para aulas de lógica de programação e algoritmos.",
+      },
+    ],
+  }),
 });
 
-// IMPORTANT: Replace this placeholder. For sites with multiple pages (About, Services, Contact, etc.),
-// create separate route files (about.tsx, services.tsx, contact.tsx) — don't put all pages in this file.
-function PlaceholderIndex() {
-  return (
-    <div
-      className="flex min-h-screen items-center justify-center"
-      style={{ backgroundColor: "#fcfbf8" }}
-    >
-      <img
-        data-lovable-blank-page-placeholder="REMOVE_THIS"
-        src="https://cdn.gpteng.co/blank-app-v1.svg"
-        alt="Your app will live here!"
-      />
-    </div>
-  );
-}
-
 function Index() {
-  return <PlaceholderIndex />;
+  return <FlowchartEditor />;
 }
