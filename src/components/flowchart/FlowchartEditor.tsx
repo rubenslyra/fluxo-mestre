@@ -487,6 +487,34 @@ export function FlowchartEditor() {
             <span>·</span>
             <span>{Math.round(view.k * 100)}%</span>
           </div>
+
+          {/* Validation panel */}
+          <div className="absolute bottom-4 right-4 w-72 rounded-lg border border-border bg-card/95 p-3 text-xs shadow-lg backdrop-blur">
+            <div className="mb-2 flex items-center justify-between">
+              <span className="font-bold uppercase tracking-widest text-muted-foreground">Validação</span>
+              {validation.length === 0 ? (
+                <span className="rounded-full bg-emerald-500/15 px-2 py-0.5 text-[10px] font-semibold text-emerald-600">
+                  OK
+                </span>
+              ) : (
+                <span className="rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] font-semibold text-amber-600">
+                  {validation.length} aviso{validation.length > 1 ? "s" : ""}
+                </span>
+              )}
+            </div>
+            {validation.length === 0 ? (
+              <p className="text-muted-foreground">Fluxograma íntegro: tem início, fim e todos os símbolos conectados.</p>
+            ) : (
+              <ul className="max-h-40 space-y-1 overflow-y-auto">
+                {validation.map((v, i) => (
+                  <li key={i} className="flex gap-1.5">
+                    <span className={v.level === "error" ? "text-destructive" : "text-amber-600"}>●</span>
+                    <span className="text-foreground">{v.msg}</span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
         </main>
       </div>
     </div>
