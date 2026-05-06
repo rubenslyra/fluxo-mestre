@@ -232,6 +232,42 @@ export function FlowchartEditor() {
 
   const selectedNode = doc.nodes.find((n) => n.id === selected) ?? null;
 
+  // Pedagogical validation
+  const validation = (() => {
+    const issues: { level: "error" | "warning"; msg: string }[] = [];
+    if (doc.nodes.length === 0) return issues;
+    const terms = doc.nodes.filter((n) => n.kind === "terminator");
+    const hasStart = terms.some((n) => /in[ií]cio|start|começar/i.test(n.label));
+    const hasEnd = terms.some((n) => /fim|end|parar/i.test(n.label));
+    if (!hasStart) issues.push({ level: "error", msg: "Falta um símbolo Terminal de Início" });
+    if (!hasEnd) issues.push({ level: "error", msg: "Falta um símbolo Terminal de Fim" });
+
+    const incoming = new Map<string, number>();
+    const outgoing = new Map<string, number>();
+    doc.nodes.forEach((n) => { incoming.set(n.id, 0); outgoing.set(n.id, 0); });
+    doc.edges.forEach((e) => {
+      incoming.set(e.to, (incoming.get(e.to) ?? 0) + 1);
+      outgoing.set(e.from, (outgoing.get(e.from) ?? 0) + 1);
+    });
+    doc.nodes.forEach((n) => {
+      const inc = incoming.get(n.id) ?? 0;
+      const out = outgoing.get(n.id) ?? 0;
+      const isStart = n.kind === "terminator" && /in[ií]cio|start/i.test(n.label);
+      const isEnd = n.kind === "terminator" && /fim|end/i.test(n.label);
+      if (inc === 0 && out === 0) {
+        issues.push({ level: "warning", msg: `"${n.label}" está desconectado` });
+      } else if (!isStart && inc === 0) {
+        issues.push({ level: "warning", msg: `"${n.label}" não tem entrada` });
+      } else if (!isEnd && out === 0) {
+        issues.push({ level: "warning", msg: `"${n.label}" não tem saída` });
+      }
+      if (n.kind === "decision" && out < 2) {
+        issues.push({ level: "warning", msg: `Decisão "${n.label}" deveria ter 2 saídas (Sim/Não)` });
+      }
+    });
+    return issues;
+  })();
+
   return (
     <div className="flex h-screen w-full flex-col bg-background">
       {/* Top bar */}
@@ -450,6 +486,34 @@ export function FlowchartEditor() {
             </button>
             <span>·</span>
             <span>{Math.round(view.k * 100)}%</span>
+          </div>
+
+          {/* Validation panel */}
+          <div className="absolute bottom-4 right-4 w-72 rounded-lg border border-border bg-card/95 p-3 text-xs shadow-lg backdrop-blur">
+            <div className="mb-2 flex items-center justify-between">
+              <span className="font-bold uppercase tracking-widest text-muted-foreground">Validação</span>
+              {validation.length === 0 ? (
+                <span className="rounded-full bg-emerald-500/15 px-2 py-0.5 text-[10px] font-semibold text-emerald-600">
+                  OK
+                </span>
+              ) : (
+                <span className="rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] font-semibold text-amber-600">
+                  {validation.length} aviso{validation.length > 1 ? "s" : ""}
+                </span>
+              )}
+            </div>
+            {validation.length === 0 ? (
+              <p className="text-muted-foreground">Fluxograma íntegro: tem início, fim e todos os símbolos conectados.</p>
+            ) : (
+              <ul className="max-h-40 space-y-1 overflow-y-auto">
+                {validation.map((v, i) => (
+                  <li key={i} className="flex gap-1.5">
+                    <span className={v.level === "error" ? "text-destructive" : "text-amber-600"}>●</span>
+                    <span className="text-foreground">{v.msg}</span>
+                  </li>
+                ))}
+              </ul>
+            )}
           </div>
         </main>
       </div>
