@@ -29,14 +29,18 @@ export const Route = createRootRoute({
     meta: [
       { charSet: "utf-8" },
       { name: "viewport", content: "width=device-width, initial-scale=1" },
-      { title: "Lovable App" },
-      { name: "description", content: "Lovable Generated Project" },
+      { title: "Fluxo Mestre" },
+      { name: "description", content: "Aplicação web para criação de fluxogramas com base na norma ISO 5807 e módulo de desafios de lógica para apoio didático em aulas de algoritmos." },
       { name: "author", content: "Lovable" },
-      { property: "og:title", content: "Lovable App" },
-      { property: "og:description", content: "Lovable Generated Project" },
+      { property: "og:title", content: "Fluxo Mestre" },
+      { property: "og:description", content: "Aplicação web para criação de fluxogramas com base na norma ISO 5807 e módulo de desafios de lógica para apoio didático em aulas de algoritmos." },
       { property: "og:type", content: "website" },
       { name: "twitter:card", content: "summary" },
       { name: "twitter:site", content: "@Lovable" },
+      { name: "twitter:title", content: "Fluxo Mestre" },
+      { name: "twitter:description", content: "Aplicação web para criação de fluxogramas com base na norma ISO 5807 e módulo de desafios de lógica para apoio didático em aulas de algoritmos." },
+      { property: "og:image", content: "https://storage.googleapis.com/gpt-engineer-file-uploads/TRVrWBvPOjNzgrUYNXBQTOTCNro2/social-images/social-1778192250355-Captura_de_tela_2026-05-07_190527.webp" },
+      { name: "twitter:image", content: "https://storage.googleapis.com/gpt-engineer-file-uploads/TRVrWBvPOjNzgrUYNXBQTOTCNro2/social-images/social-1778192250355-Captura_de_tela_2026-05-07_190527.webp" },
     ],
     links: [
       {
