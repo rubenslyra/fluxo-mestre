@@ -131,6 +131,64 @@ export function CriticalThinkingLab() {
             <p className="text-sm leading-relaxed">{active.scenario}</p>
           </section>
 
+          {/* Por que isso importa — resposta ao aluno crítico */}
+          <section className="rounded-xl border-2 border-primary/40 bg-gradient-to-br from-primary/5 to-transparent p-5">
+            <div className="mb-3 flex items-center gap-2">
+              <span className="text-lg">🎯</span>
+              <h3 className="text-xs font-bold uppercase tracking-widest text-primary">
+                Por que estudar isso? (para o aluno cético)
+              </h3>
+            </div>
+            <p className="text-sm leading-relaxed font-medium">{active.whyItMatters}</p>
+            <div className="mt-4 rounded-lg bg-background/60 p-3">
+              <p className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground">
+                Habilidade transferível
+              </p>
+              <p className="mt-1 text-sm italic">{active.transferableSkill}</p>
+            </div>
+          </section>
+
+          {/* Onde isso aparece no mercado */}
+          <section className="rounded-xl border border-border bg-card p-5">
+            <h3 className="mb-3 text-xs font-bold uppercase tracking-widest text-muted-foreground">
+              Onde isso aparece no mundo real
+            </h3>
+            <ul className="grid gap-2 sm:grid-cols-2">
+              {active.realWorldApplications.map((app, i) => (
+                <li key={i} className="flex gap-2 rounded-md bg-muted/40 p-2 text-sm">
+                  <span className="text-primary">→</span>
+                  <span className="leading-snug">{app}</span>
+                </li>
+              ))}
+            </ul>
+          </section>
+
+          {/* Perguntas críticas dos alunos + respostas prontas */}
+          <section className="rounded-xl border border-border bg-card p-5">
+            <h3 className="mb-3 text-xs font-bold uppercase tracking-widest text-muted-foreground">
+              Quando o aluno questionar... (respostas prontas)
+            </h3>
+            <div className="space-y-3">
+              {active.studentObjections.map((obj, i) => (
+                <details
+                  key={i}
+                  className="group rounded-lg border border-border bg-muted/20 p-3 open:bg-muted/40"
+                >
+                  <summary className="cursor-pointer list-none text-sm font-semibold">
+                    <span className="mr-2 text-primary">💬</span>
+                    {obj.question}
+                    <span className="float-right text-xs text-muted-foreground group-open:hidden">
+                      ver resposta
+                    </span>
+                  </summary>
+                  <p className="mt-2 border-l-2 border-primary pl-3 text-sm leading-relaxed text-foreground/90">
+                    {obj.answer}
+                  </p>
+                </details>
+              ))}
+            </div>
+          </section>
+
           {/* Perguntas socráticas */}
           <section className="rounded-xl border border-border bg-card p-5">
             <h3 className="mb-3 text-xs font-bold uppercase tracking-widest text-muted-foreground">
