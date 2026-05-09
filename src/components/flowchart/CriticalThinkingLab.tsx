@@ -1,17 +1,27 @@
 import { useMemo, useState } from "react";
-import { CHALLENGES, type Challenge, type Difficulty } from "./challenges";
+import { CHALLENGES, type Challenge, type Difficulty, type StudentObjection } from "./challenges";
+import {
+  classifyObjection,
+  SOCRATIC_PLAYBOOK,
+  TAG_COLOR,
+  TAG_LABEL,
+  type ObjectionTag,
+} from "./objectionTags";
 
 const STORAGE_KEY = "flowchart-challenges-progress-v1";
+const OBJ_OVERRIDE_KEY = "flowchart-objection-overrides-v1";
 
 type Progress = Record<string, { stepIdx: number; notes: string; revealed: boolean; done: boolean }>;
+// Por desafio: lista completa que substitui as objeções padrão (quando definida).
+type ObjectionOverrides = Record<string, StudentObjection[]>;
 
-function loadProgress(): Progress {
-  if (typeof window === "undefined") return {};
+function loadJSON<T>(key: string, fallback: T): T {
+  if (typeof window === "undefined") return fallback;
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
+    const raw = localStorage.getItem(key);
     if (raw) return JSON.parse(raw);
   } catch {}
-  return {};
+  return fallback;
 }
 
 const diffColor: Record<Difficulty, string> = {
@@ -20,31 +30,125 @@ const diffColor: Record<Difficulty, string> = {
   avançado: "bg-rose-500/15 text-rose-700 dark:text-rose-400",
 };
 
+function getEffectiveObjections(c: Challenge, overrides: ObjectionOverrides): StudentObjection[] {
+  return overrides[c.id] ?? c.studentObjections;
+}
+
+function escapeHtml(s: string) {
+  return s.replace(/[&<>"']/g, (m) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[m]!));
+}
+
+function exportPrintable(c: Challenge, objections: StudentObjection[]) {
+  const html = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"/>
+<title>${escapeHtml(c.title)} — Material de aula</title>
+<style>
+  body{font-family:Georgia,serif;max-width:780px;margin:24px auto;padding:0 24px;color:#111;line-height:1.55}
+  h1{font-size:26px;margin-bottom:4px}
+  h2{font-size:16px;text-transform:uppercase;letter-spacing:.08em;color:#444;margin-top:28px;border-bottom:1px solid #ccc;padding-bottom:4px}
+  .meta{color:#666;font-size:13px;margin-bottom:18px}
+  .box{background:#f6f6f6;border-left:4px solid #2563eb;padding:12px 16px;margin:12px 0}
+  ul{padding-left:20px}
+  li{margin:4px 0}
+  .obj{border:1px solid #ddd;border-radius:6px;padding:10px 14px;margin:10px 0;page-break-inside:avoid}
+  .obj .q{font-weight:bold}
+  .obj .a{margin-top:6px;color:#222}
+  footer{margin-top:40px;color:#888;font-size:11px;text-align:center;border-top:1px solid #eee;padding-top:8px}
+  @media print{body{margin:0}}
+</style></head><body>
+<h1>${escapeHtml(c.title)}</h1>
+<div class="meta">${escapeHtml(c.category)} · ${escapeHtml(c.difficulty)} · Conceito: ${escapeHtml(c.logicConcept)}</div>
+
+<h2>Cenário</h2>
+<p>${escapeHtml(c.scenario)}</p>
+
+<h2>Por que estudar isso?</h2>
+<div class="box">${escapeHtml(c.whyItMatters)}</div>
+<p><strong>Habilidade transferível:</strong> ${escapeHtml(c.transferableSkill)}</p>
+
+<h2>Onde isso aparece no mundo real</h2>
+<ul>${c.realWorldApplications.map((a) => `<li>${escapeHtml(a)}</li>`).join("")}</ul>
+
+<h2>Respostas prontas para objeções dos alunos</h2>
+${objections
+  .map(
+    (o) => `<div class="obj"><div class="q">💬 ${escapeHtml(o.question)}</div><div class="a">${escapeHtml(o.answer)}</div></div>`,
+  )
+  .join("")}
+
+<footer>FluxoLab · Material de apoio para aula · Imprima ou salve como PDF (Ctrl/Cmd+P)</footer>
+<script>window.addEventListener('load',()=>setTimeout(()=>window.print(),300))</script>
+</body></html>`;
+
+  const w = window.open("", "_blank", "width=900,height=700");
+  if (!w) {
+    alert("Permita pop-ups para gerar o PDF.");
+    return;
+  }
+  w.document.open();
+  w.document.write(html);
+  w.document.close();
+}
+
 export function CriticalThinkingLab() {
-  const [progress, setProgress] = useState<Progress>(() => loadProgress());
+  const [progress, setProgress] = useState<Progress>(() => loadJSON(STORAGE_KEY, {}));
+  const [objOverrides, setObjOverrides] = useState<ObjectionOverrides>(() => loadJSON(OBJ_OVERRIDE_KEY, {}));
   const [activeId, setActiveId] = useState<string>(CHALLENGES[0].id);
   const [filter, setFilter] = useState<"todos" | Difficulty>("todos");
+  const [tagFilter, setTagFilter] = useState<"todos" | ObjectionTag>("todos");
+  const [editingObj, setEditingObj] = useState(false);
+  const [debateObjIdx, setDebateObjIdx] = useState<number | null>(null);
 
-  const persist = (next: Progress) => {
+  const persistProg = (next: Progress) => {
     setProgress(next);
     try { localStorage.setItem(STORAGE_KEY, JSON.stringify(next)); } catch {}
   };
-
-  const getProg = (id: string) =>
-    progress[id] ?? { stepIdx: 0, notes: "", revealed: false, done: false };
-
-  const updateProg = (id: string, patch: Partial<Progress[string]>) => {
-    persist({ ...progress, [id]: { ...getProg(id), ...patch } });
+  const persistObj = (next: ObjectionOverrides) => {
+    setObjOverrides(next);
+    try { localStorage.setItem(OBJ_OVERRIDE_KEY, JSON.stringify(next)); } catch {}
   };
 
-  const filtered = useMemo(
-    () => (filter === "todos" ? CHALLENGES : CHALLENGES.filter((c) => c.difficulty === filter)),
-    [filter],
-  );
+  const getProg = (id: string) => progress[id] ?? { stepIdx: 0, notes: "", revealed: false, done: false };
+  const updateProg = (id: string, patch: Partial<Progress[string]>) => {
+    persistProg({ ...progress, [id]: { ...getProg(id), ...patch } });
+  };
+
+  const filtered = useMemo(() => {
+    return CHALLENGES.filter((c) => {
+      if (filter !== "todos" && c.difficulty !== filter) return false;
+      if (tagFilter !== "todos") {
+        const objs = getEffectiveObjections(c, objOverrides);
+        const hasTag = objs.some((o) => classifyObjection(o.question) === tagFilter);
+        if (!hasTag) return false;
+      }
+      return true;
+    });
+  }, [filter, tagFilter, objOverrides]);
 
   const active = CHALLENGES.find((c) => c.id === activeId) ?? CHALLENGES[0];
   const prog = getProg(active.id);
   const totalDone = Object.values(progress).filter((p) => p.done).length;
+  const objections = getEffectiveObjections(active, objOverrides);
+  const isCustom = !!objOverrides[active.id];
+
+  // ---------- Editor handlers ----------
+  const ensureDraft = (): StudentObjection[] => objOverrides[active.id] ?? active.studentObjections.map((o) => ({ ...o }));
+  const updateObjAt = (i: number, patch: Partial<StudentObjection>) => {
+    const draft = ensureDraft().map((o, idx) => (idx === i ? { ...o, ...patch } : o));
+    persistObj({ ...objOverrides, [active.id]: draft });
+  };
+  const addObj = () => {
+    const draft = [...ensureDraft(), { question: "Nova objeção do aluno...", answer: "Resposta do professor..." }];
+    persistObj({ ...objOverrides, [active.id]: draft });
+  };
+  const removeObjAt = (i: number) => {
+    const draft = ensureDraft().filter((_, idx) => idx !== i);
+    persistObj({ ...objOverrides, [active.id]: draft });
+  };
+  const resetObj = () => {
+    const next = { ...objOverrides };
+    delete next[active.id];
+    persistObj(next);
+  };
 
   return (
     <div className="flex h-full w-full overflow-hidden bg-background">
@@ -55,31 +159,62 @@ export function CriticalThinkingLab() {
             Desafios de Pensamento Lógico
           </h2>
           <p className="mt-1 text-xs text-muted-foreground">
-            {totalDone} de {CHALLENGES.length} concluídos
+            {totalDone} de {CHALLENGES.length} concluídos · {filtered.length} no filtro
           </p>
-          <div className="mt-3 flex gap-1">
-            {(["todos", "iniciante", "intermediário", "avançado"] as const).map((f) => (
+
+          <div className="mt-3">
+            <p className="mb-1 text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Dificuldade</p>
+            <div className="flex flex-wrap gap-1">
+              {(["todos", "iniciante", "intermediário", "avançado"] as const).map((f) => (
+                <button
+                  key={f}
+                  onClick={() => setFilter(f)}
+                  className={`rounded-md px-2 py-1 text-[11px] font-medium capitalize transition ${
+                    filter === f ? "bg-primary text-primary-foreground" : "border border-border bg-background hover:bg-muted"
+                  }`}
+                >
+                  {f}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="mt-3">
+            <p className="mb-1 text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+              Tipo de objeção crítica
+            </p>
+            <div className="flex flex-wrap gap-1">
               <button
-                key={f}
-                onClick={() => setFilter(f)}
-                className={`rounded-md px-2 py-1 text-[11px] font-medium capitalize transition ${
-                  filter === f
-                    ? "bg-primary text-primary-foreground"
-                    : "border border-border bg-background hover:bg-muted"
+                onClick={() => setTagFilter("todos")}
+                className={`rounded-md px-2 py-1 text-[11px] font-medium transition ${
+                  tagFilter === "todos" ? "bg-primary text-primary-foreground" : "border border-border bg-background hover:bg-muted"
                 }`}
               >
-                {f}
+                todas
               </button>
-            ))}
+              {(Object.keys(TAG_LABEL) as ObjectionTag[]).map((t) => (
+                <button
+                  key={t}
+                  onClick={() => setTagFilter(t)}
+                  className={`rounded-md px-2 py-1 text-[11px] font-medium transition ${
+                    tagFilter === t ? "bg-primary text-primary-foreground" : `${TAG_COLOR[t]} hover:opacity-80`
+                  }`}
+                  title={TAG_LABEL[t]}
+                >
+                  {TAG_LABEL[t]}
+                </button>
+              ))}
+            </div>
           </div>
         </div>
+
         <ul className="divide-y divide-border">
           {filtered.map((c) => {
             const p = getProg(c.id);
             return (
               <li key={c.id}>
                 <button
-                  onClick={() => setActiveId(c.id)}
+                  onClick={() => { setActiveId(c.id); setEditingObj(false); setDebateObjIdx(null); }}
                   className={`flex w-full flex-col gap-1 px-4 py-3 text-left transition ${
                     activeId === c.id ? "bg-muted" : "hover:bg-muted/50"
                   }`}
@@ -87,72 +222,66 @@ export function CriticalThinkingLab() {
                   <div className="flex items-center justify-between gap-2">
                     <span className="text-sm font-semibold">{c.title}</span>
                     {p.done && (
-                      <span className="rounded-full bg-emerald-500/20 px-1.5 py-0.5 text-[10px] font-bold text-emerald-700 dark:text-emerald-400">
-                        ✓
-                      </span>
+                      <span className="rounded-full bg-emerald-500/20 px-1.5 py-0.5 text-[10px] font-bold text-emerald-700 dark:text-emerald-400">✓</span>
                     )}
                   </div>
                   <div className="flex items-center gap-2">
-                    <span className={`rounded px-1.5 py-0.5 text-[10px] font-medium capitalize ${diffColor[c.difficulty]}`}>
-                      {c.difficulty}
-                    </span>
+                    <span className={`rounded px-1.5 py-0.5 text-[10px] font-medium capitalize ${diffColor[c.difficulty]}`}>{c.difficulty}</span>
                     <span className="text-[11px] text-muted-foreground">{c.category}</span>
                   </div>
                 </button>
               </li>
             );
           })}
+          {filtered.length === 0 && (
+            <li className="p-4 text-xs text-muted-foreground italic">Nenhum desafio com esses filtros.</li>
+          )}
         </ul>
       </aside>
 
       {/* Main */}
       <main className="flex-1 overflow-y-auto">
         <div className="mx-auto max-w-3xl space-y-6 p-8">
-          <header>
-            <div className="flex items-center gap-2">
-              <span className={`rounded px-2 py-0.5 text-xs font-medium capitalize ${diffColor[active.difficulty]}`}>
-                {active.difficulty}
-              </span>
-              <span className="text-xs uppercase tracking-widest text-muted-foreground">
-                {active.category}
-              </span>
+          <header className="flex items-start justify-between gap-4">
+            <div>
+              <div className="flex items-center gap-2">
+                <span className={`rounded px-2 py-0.5 text-xs font-medium capitalize ${diffColor[active.difficulty]}`}>{active.difficulty}</span>
+                <span className="text-xs uppercase tracking-widest text-muted-foreground">{active.category}</span>
+              </div>
+              <h1 className="mt-2 text-3xl font-bold tracking-tight">{active.title}</h1>
+              <p className="mt-2 text-sm font-medium text-primary">Conceito lógico: {active.logicConcept}</p>
             </div>
-            <h1 className="mt-2 text-3xl font-bold tracking-tight">{active.title}</h1>
-            <p className="mt-2 text-sm font-medium text-primary">
-              Conceito lógico: {active.logicConcept}
-            </p>
+            <button
+              onClick={() => exportPrintable(active, objections)}
+              className="shrink-0 rounded-md border border-border bg-card px-3 py-2 text-xs font-medium hover:bg-muted"
+              title="Abre uma janela formatada para imprimir ou salvar como PDF"
+            >
+              🖨️ Exportar material da aula (PDF)
+            </button>
           </header>
 
           {/* Cenário */}
           <section className="rounded-xl border border-border bg-card p-5">
-            <h3 className="mb-2 text-xs font-bold uppercase tracking-widest text-muted-foreground">
-              Cenário
-            </h3>
+            <h3 className="mb-2 text-xs font-bold uppercase tracking-widest text-muted-foreground">Cenário</h3>
             <p className="text-sm leading-relaxed">{active.scenario}</p>
           </section>
 
-          {/* Por que isso importa — resposta ao aluno crítico */}
+          {/* Por que isso importa */}
           <section className="rounded-xl border-2 border-primary/40 bg-gradient-to-br from-primary/5 to-transparent p-5">
             <div className="mb-3 flex items-center gap-2">
               <span className="text-lg">🎯</span>
-              <h3 className="text-xs font-bold uppercase tracking-widest text-primary">
-                Por que estudar isso? (para o aluno cético)
-              </h3>
+              <h3 className="text-xs font-bold uppercase tracking-widest text-primary">Por que estudar isso? (para o aluno cético)</h3>
             </div>
             <p className="text-sm leading-relaxed font-medium">{active.whyItMatters}</p>
             <div className="mt-4 rounded-lg bg-background/60 p-3">
-              <p className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground">
-                Habilidade transferível
-              </p>
+              <p className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground">Habilidade transferível</p>
               <p className="mt-1 text-sm italic">{active.transferableSkill}</p>
             </div>
           </section>
 
-          {/* Onde isso aparece no mercado */}
+          {/* Aplicações reais */}
           <section className="rounded-xl border border-border bg-card p-5">
-            <h3 className="mb-3 text-xs font-bold uppercase tracking-widest text-muted-foreground">
-              Onde isso aparece no mundo real
-            </h3>
+            <h3 className="mb-3 text-xs font-bold uppercase tracking-widest text-muted-foreground">Onde isso aparece no mundo real</h3>
             <ul className="grid gap-2 sm:grid-cols-2">
               {active.realWorldApplications.map((app, i) => (
                 <li key={i} className="flex gap-2 rounded-md bg-muted/40 p-2 text-sm">
@@ -163,37 +292,136 @@ export function CriticalThinkingLab() {
             </ul>
           </section>
 
-          {/* Perguntas críticas dos alunos + respostas prontas */}
+          {/* Objeções: visualização + editor + debate socrático */}
           <section className="rounded-xl border border-border bg-card p-5">
-            <h3 className="mb-3 text-xs font-bold uppercase tracking-widest text-muted-foreground">
-              Quando o aluno questionar... (respostas prontas)
-            </h3>
-            <div className="space-y-3">
-              {active.studentObjections.map((obj, i) => (
-                <details
-                  key={i}
-                  className="group rounded-lg border border-border bg-muted/20 p-3 open:bg-muted/40"
+            <div className="mb-3 flex items-center justify-between gap-2">
+              <h3 className="text-xs font-bold uppercase tracking-widest text-muted-foreground">
+                Objeções típicas dos alunos {isCustom && <span className="ml-2 rounded bg-primary/15 px-1.5 py-0.5 text-[10px] text-primary">customizadas</span>}
+              </h3>
+              <div className="flex gap-1">
+                <button
+                  onClick={() => setEditingObj((v) => !v)}
+                  className="rounded-md border border-border px-2 py-1 text-xs hover:bg-muted"
                 >
-                  <summary className="cursor-pointer list-none text-sm font-semibold">
-                    <span className="mr-2 text-primary">💬</span>
-                    {obj.question}
-                    <span className="float-right text-xs text-muted-foreground group-open:hidden">
-                      ver resposta
-                    </span>
-                  </summary>
-                  <p className="mt-2 border-l-2 border-primary pl-3 text-sm leading-relaxed text-foreground/90">
-                    {obj.answer}
-                  </p>
-                </details>
-              ))}
+                  {editingObj ? "Concluir edição" : "✎ Editar"}
+                </button>
+                {isCustom && (
+                  <button
+                    onClick={resetObj}
+                    className="rounded-md border border-border px-2 py-1 text-xs hover:bg-muted"
+                    title="Voltar para as objeções originais do desafio"
+                  >
+                    ↺ Restaurar padrão
+                  </button>
+                )}
+              </div>
+            </div>
+
+            <div className="space-y-3">
+              {objections.map((obj, i) => {
+                const tag = classifyObjection(obj.question);
+                const isDebating = debateObjIdx === i;
+                return (
+                  <div key={i} className="rounded-lg border border-border bg-muted/20 p-3">
+                    <div className="mb-2 flex items-center justify-between gap-2">
+                      <span className={`rounded px-1.5 py-0.5 text-[10px] font-medium ${TAG_COLOR[tag]}`}>{TAG_LABEL[tag]}</span>
+                      <div className="flex gap-1">
+                        <button
+                          onClick={() => setDebateObjIdx(isDebating ? null : i)}
+                          className={`rounded-md px-2 py-0.5 text-[11px] font-medium transition ${
+                            isDebating ? "bg-primary text-primary-foreground" : "border border-border hover:bg-muted"
+                          }`}
+                        >
+                          {isDebating ? "Fechar debate" : "🎭 Conduzir debate"}
+                        </button>
+                        {editingObj && (
+                          <button
+                            onClick={() => removeObjAt(i)}
+                            className="rounded-md border border-rose-300 px-2 py-0.5 text-[11px] text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950"
+                          >
+                            Remover
+                          </button>
+                        )}
+                      </div>
+                    </div>
+
+                    {editingObj ? (
+                      <div className="space-y-2">
+                        <textarea
+                          value={obj.question}
+                          onChange={(e) => updateObjAt(i, { question: e.target.value })}
+                          rows={2}
+                          className="w-full resize-y rounded-md border border-input bg-background px-2 py-1 text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-ring"
+                          placeholder="Pergunta crítica do aluno"
+                        />
+                        <textarea
+                          value={obj.answer}
+                          onChange={(e) => updateObjAt(i, { answer: e.target.value })}
+                          rows={4}
+                          className="w-full resize-y rounded-md border border-input bg-background px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                          placeholder="Resposta / fundamentação"
+                        />
+                      </div>
+                    ) : (
+                      <>
+                        <p className="text-sm font-semibold">
+                          <span className="mr-1 text-primary">💬</span>
+                          {obj.question}
+                        </p>
+                        <p className="mt-2 border-l-2 border-primary pl-3 text-sm leading-relaxed text-foreground/90">{obj.answer}</p>
+                      </>
+                    )}
+
+                    {isDebating && (
+                      <div className="mt-3 rounded-md border border-primary/40 bg-primary/5 p-3">
+                        <p className="mb-2 text-[11px] font-bold uppercase tracking-wider text-primary">
+                          Roteiro socrático sugerido — categoria: {TAG_LABEL[tag]}
+                        </p>
+                        <ol className="space-y-2">
+                          {SOCRATIC_PLAYBOOK[tag].map((turn, ti) => (
+                            <li key={ti} className="flex gap-2 text-sm">
+                              <span className="mt-0.5 shrink-0 text-xs font-mono text-muted-foreground">{ti + 1}.</span>
+                              <div>
+                                <span
+                                  className={`mr-2 rounded px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider ${
+                                    turn.role === "professor"
+                                      ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-400"
+                                      : turn.role === "pergunta-socratica"
+                                      ? "bg-violet-500/15 text-violet-700 dark:text-violet-400"
+                                      : "bg-amber-500/15 text-amber-700 dark:text-amber-400"
+                                  }`}
+                                >
+                                  {turn.role === "professor"
+                                    ? "professor"
+                                    : turn.role === "pergunta-socratica"
+                                    ? "pergunte"
+                                    : "aluno (esperado)"}
+                                </span>
+                                <span className="leading-relaxed">{turn.text}</span>
+                              </div>
+                            </li>
+                          ))}
+                        </ol>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+
+              {editingObj && (
+                <button
+                  onClick={addObj}
+                  className="w-full rounded-md border border-dashed border-border px-3 py-2 text-sm text-muted-foreground hover:bg-muted"
+                >
+                  + Adicionar nova objeção da turma
+                </button>
+              )}
             </div>
           </section>
 
-          {/* Perguntas socráticas */}
+          {/* Provocações */}
           <section className="rounded-xl border border-border bg-card p-5">
-            <h3 className="mb-3 text-xs font-bold uppercase tracking-widest text-muted-foreground">
-              Provocações para destravar o pensamento
-            </h3>
+            <h3 className="mb-3 text-xs font-bold uppercase tracking-widest text-muted-foreground">Provocações para destravar o pensamento</h3>
             <ul className="space-y-2">
               {active.provocations.map((p, i) => (
                 <li key={i} className="flex gap-3 text-sm">
@@ -211,10 +439,7 @@ export function CriticalThinkingLab() {
                 Roteiro: Passo {Math.min(prog.stepIdx + 1, active.steps.length)} de {active.steps.length}
               </h3>
               <div className="flex h-1.5 w-32 overflow-hidden rounded-full bg-muted">
-                <div
-                  className="bg-primary transition-all"
-                  style={{ width: `${((prog.stepIdx) / active.steps.length) * 100}%` }}
-                />
+                <div className="bg-primary transition-all" style={{ width: `${(prog.stepIdx / active.steps.length) * 100}%` }} />
               </div>
             </div>
 
@@ -223,26 +448,9 @@ export function CriticalThinkingLab() {
                 const isCurrent = i === prog.stepIdx;
                 const isDone = i < prog.stepIdx;
                 return (
-                  <div
-                    key={i}
-                    className={`rounded-lg border p-3 transition ${
-                      isCurrent
-                        ? "border-primary bg-primary/5"
-                        : isDone
-                        ? "border-border bg-muted/30 opacity-70"
-                        : "border-border opacity-50"
-                    }`}
-                  >
+                  <div key={i} className={`rounded-lg border p-3 transition ${isCurrent ? "border-primary bg-primary/5" : isDone ? "border-border bg-muted/30 opacity-70" : "border-border opacity-50"}`}>
                     <div className="flex items-start gap-3">
-                      <span
-                        className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-xs font-bold ${
-                          isDone
-                            ? "bg-emerald-500 text-white"
-                            : isCurrent
-                            ? "bg-primary text-primary-foreground"
-                            : "bg-muted text-muted-foreground"
-                        }`}
-                      >
+                      <span className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-xs font-bold ${isDone ? "bg-emerald-500 text-white" : isCurrent ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground"}`}>
                         {isDone ? "✓" : i + 1}
                       </span>
                       <div className="flex-1">
@@ -250,9 +458,7 @@ export function CriticalThinkingLab() {
                         <p className="mt-1 text-sm text-muted-foreground">{s.prompt}</p>
                         {isCurrent && s.hint && (
                           <details className="mt-2">
-                            <summary className="cursor-pointer text-xs font-medium text-primary hover:underline">
-                              Ver dica
-                            </summary>
+                            <summary className="cursor-pointer text-xs font-medium text-primary hover:underline">Ver dica</summary>
                             <p className="mt-1 text-xs text-muted-foreground">{s.hint}</p>
                           </details>
                         )}
@@ -264,28 +470,18 @@ export function CriticalThinkingLab() {
             </div>
 
             <div className="mt-4 flex gap-2">
-              <button
-                disabled={prog.stepIdx === 0}
-                onClick={() => updateProg(active.id, { stepIdx: Math.max(0, prog.stepIdx - 1) })}
-                className="rounded-md border border-border px-3 py-1.5 text-sm hover:bg-muted disabled:opacity-40"
-              >
+              <button disabled={prog.stepIdx === 0} onClick={() => updateProg(active.id, { stepIdx: Math.max(0, prog.stepIdx - 1) })} className="rounded-md border border-border px-3 py-1.5 text-sm hover:bg-muted disabled:opacity-40">
                 Anterior
               </button>
-              <button
-                disabled={prog.stepIdx >= active.steps.length}
-                onClick={() => updateProg(active.id, { stepIdx: prog.stepIdx + 1 })}
-                className="rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground hover:opacity-90 disabled:opacity-40"
-              >
+              <button disabled={prog.stepIdx >= active.steps.length} onClick={() => updateProg(active.id, { stepIdx: prog.stepIdx + 1 })} className="rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground hover:opacity-90 disabled:opacity-40">
                 Próximo passo
               </button>
             </div>
           </section>
 
-          {/* Anotações do aluno */}
+          {/* Anotações */}
           <section className="rounded-xl border border-border bg-card p-5">
-            <h3 className="mb-2 text-xs font-bold uppercase tracking-widest text-muted-foreground">
-              Suas anotações (rascunho do raciocínio)
-            </h3>
+            <h3 className="mb-2 text-xs font-bold uppercase tracking-widest text-muted-foreground">Suas anotações (rascunho do raciocínio)</h3>
             <textarea
               value={prog.notes}
               onChange={(e) => updateProg(active.id, { notes: e.target.value })}
@@ -295,52 +491,35 @@ export function CriticalThinkingLab() {
             />
           </section>
 
-          {/* Premissas e decisões esperadas */}
+          {/* Premissas e decisões */}
           <section className="grid gap-4 sm:grid-cols-2">
             <div className="rounded-xl border border-border bg-card p-5">
-              <h3 className="mb-2 text-xs font-bold uppercase tracking-widest text-muted-foreground">
-                Premissas dadas
-              </h3>
+              <h3 className="mb-2 text-xs font-bold uppercase tracking-widest text-muted-foreground">Premissas dadas</h3>
               <ul className="space-y-1 text-sm">
-                {active.premises.map((p, i) => (
-                  <li key={i} className="flex gap-2"><span className="text-primary">•</span>{p}</li>
-                ))}
+                {active.premises.map((p, i) => (<li key={i} className="flex gap-2"><span className="text-primary">•</span>{p}</li>))}
               </ul>
             </div>
             <div className="rounded-xl border border-border bg-card p-5">
-              <h3 className="mb-2 text-xs font-bold uppercase tracking-widest text-muted-foreground">
-                Decisões esperadas
-              </h3>
+              <h3 className="mb-2 text-xs font-bold uppercase tracking-widest text-muted-foreground">Decisões esperadas</h3>
               <ul className="space-y-1 text-sm font-mono">
-                {active.expectedDecisions.map((d, i) => (
-                  <li key={i} className="flex gap-2"><span className="text-primary">◇</span>{d}</li>
-                ))}
+                {active.expectedDecisions.map((d, i) => (<li key={i} className="flex gap-2"><span className="text-primary">◇</span>{d}</li>))}
               </ul>
             </div>
           </section>
 
           {/* Armadilhas */}
           <section className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-5">
-            <h3 className="mb-2 text-xs font-bold uppercase tracking-widest text-amber-700 dark:text-amber-400">
-              Armadilhas comuns
-            </h3>
+            <h3 className="mb-2 text-xs font-bold uppercase tracking-widest text-amber-700 dark:text-amber-400">Armadilhas comuns</h3>
             <ul className="space-y-1 text-sm">
-              {active.pitfalls.map((p, i) => (
-                <li key={i} className="flex gap-2"><span>⚠️</span>{p}</li>
-              ))}
+              {active.pitfalls.map((p, i) => (<li key={i} className="flex gap-2"><span>⚠️</span>{p}</li>))}
             </ul>
           </section>
 
-          {/* Solução de referência */}
+          {/* Solução */}
           <section className="rounded-xl border border-border bg-card p-5">
             <div className="mb-3 flex items-center justify-between">
-              <h3 className="text-xs font-bold uppercase tracking-widest text-muted-foreground">
-                Fluxo de referência
-              </h3>
-              <button
-                onClick={() => updateProg(active.id, { revealed: !prog.revealed })}
-                className="rounded-md border border-border px-3 py-1 text-xs hover:bg-muted"
-              >
+              <h3 className="text-xs font-bold uppercase tracking-widest text-muted-foreground">Fluxo de referência</h3>
+              <button onClick={() => updateProg(active.id, { revealed: !prog.revealed })} className="rounded-md border border-border px-3 py-1 text-xs hover:bg-muted">
                 {prog.revealed ? "Ocultar" : "Revelar"}
               </button>
             </div>
@@ -348,15 +527,12 @@ export function CriticalThinkingLab() {
               <ol className="space-y-1 rounded-md bg-muted/50 p-4 font-mono text-xs">
                 {active.referenceFlow.map((line, i) => (
                   <li key={i} className="leading-relaxed">
-                    <span className="mr-2 text-muted-foreground">{String(i + 1).padStart(2, "0")}.</span>
-                    {line}
+                    <span className="mr-2 text-muted-foreground">{String(i + 1).padStart(2, "0")}.</span>{line}
                   </li>
                 ))}
               </ol>
             ) : (
-              <p className="text-sm italic text-muted-foreground">
-                Tente esboçar o fluxo no editor antes de revelar a referência. O processo de errar e ajustar é parte do aprendizado.
-              </p>
+              <p className="text-sm italic text-muted-foreground">Tente esboçar o fluxo no editor antes de revelar a referência. O processo de errar e ajustar é parte do aprendizado.</p>
             )}
           </section>
 
@@ -364,17 +540,11 @@ export function CriticalThinkingLab() {
           <section className="flex items-center justify-between rounded-xl border border-border bg-card p-5">
             <div>
               <p className="text-sm font-semibold">Pronto para o próximo desafio?</p>
-              <p className="text-xs text-muted-foreground">
-                Marque como concluído quando tiver desenhado o fluxo no editor e comparado com a referência.
-              </p>
+              <p className="text-xs text-muted-foreground">Marque como concluído quando tiver desenhado o fluxo no editor e comparado com a referência.</p>
             </div>
             <button
               onClick={() => updateProg(active.id, { done: !prog.done })}
-              className={`rounded-md px-4 py-2 text-sm font-medium transition ${
-                prog.done
-                  ? "bg-emerald-500 text-white hover:opacity-90"
-                  : "bg-primary text-primary-foreground hover:opacity-90"
-              }`}
+              className={`rounded-md px-4 py-2 text-sm font-medium transition ${prog.done ? "bg-emerald-500 text-white hover:opacity-90" : "bg-primary text-primary-foreground hover:opacity-90"}`}
             >
               {prog.done ? "✓ Concluído" : "Marcar como concluído"}
             </button>
