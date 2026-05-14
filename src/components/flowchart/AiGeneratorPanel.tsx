@@ -1,8 +1,21 @@
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useServerFn } from "@tanstack/react-start";
 import { generateFlowchart } from "@/lib/flowchart-ai.functions";
 import { layoutGeneratedFlow } from "./aiLayout";
 import type { FlowDoc } from "./types";
+import {
+  addTemplate,
+  clearHistory,
+  diffFlows,
+  loadHistory,
+  loadTemplates,
+  pushHistory,
+  removeHistory,
+  removeTemplate,
+  type AiHistoryEntry,
+  type PromptTemplate,
+} from "./aiHistory";
+import { validateFlow } from "./validation";
 
 interface Props {
   open: boolean;
@@ -10,19 +23,31 @@ interface Props {
   onApply: (doc: FlowDoc, mode: "replace" | "merge") => void;
 }
 
-const EXAMPLE = `Sistema de avaliação UVVon: ler para 100 alunos as notas AOP1 [0-1], AOP2 [0-2], AOP3 [0-1] e Prova Regular [0-6]. Calcular MM = AOP1+AOP2+AOP3+PR.
-- Se MM < 3.0 → Reprovado direto.
-- Se MM >= 7.0 → Aprovado.
-- Senão (3.0 <= MM < 7.0) → ler nota da Prova de Recuperação [0-10] e calcular Média Geral. Se >= 5.0 → Aprovado, senão → Reprovado.
-Ao final, mostrar a porcentagem de aprovados e reprovados.`;
+type Tab = "generate" | "templates" | "history";
 
 export function AiGeneratorPanel({ open, onClose, onApply }: Props) {
+  const [tab, setTab] = useState<Tab>("generate");
   const [description, setDescription] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [summary, setSummary] = useState<string | null>(null);
   const [pending, setPending] = useState<FlowDoc | null>(null);
+  const [pendingTitle, setPendingTitle] = useState<string>("");
+  const [templates, setTemplates] = useState<PromptTemplate[]>([]);
+  const [history, setHistory] = useState<AiHistoryEntry[]>([]);
+  const [compareIds, setCompareIds] = useState<[string | null, string | null]>([null, null]);
   const generate = useServerFn(generateFlowchart);
+
+  useEffect(() => {
+    if (open) {
+      setTemplates(loadTemplates());
+      setHistory(loadHistory());
+    }
+  }, [open]);
+
+  const validation = useMemo(() => (pending ? validateFlow(pending) : []), [pending]);
+  const errors = validation.filter((v) => v.level === "error");
+  const warnings = validation.filter((v) => v.level === "warning");
 
   if (!open) return null;
 
@@ -43,7 +68,15 @@ export function AiGeneratorPanel({ open, onClose, onApply }: Props) {
       }
       const doc = layoutGeneratedFlow(res.flow);
       setPending(doc);
+      setPendingTitle(res.flow.title);
       setSummary(`${res.flow.title}${res.flow.summary ? " — " + res.flow.summary : ""}`);
+      const next = pushHistory({
+        description: description.trim(),
+        title: res.flow.title,
+        summary: res.flow.summary,
+        flow: doc,
+      });
+      setHistory(next);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -51,101 +84,340 @@ export function AiGeneratorPanel({ open, onClose, onApply }: Props) {
     }
   };
 
-  const apply = (mode: "replace" | "merge") => {
-    if (!pending) return;
-    onApply(pending, mode);
+  const apply = (mode: "replace" | "merge", doc: FlowDoc | null = pending) => {
+    if (!doc) return;
+    onApply(doc, mode);
     onClose();
   };
 
+  const onSaveTemplate = () => {
+    if (description.trim().length < 10) {
+      setError("Escreva o enunciado antes de salvar como template.");
+      return;
+    }
+    const name = window.prompt("Nome do template (ex: AOP1 UVV - Médias):", pendingTitle || "Meu template");
+    if (!name) return;
+    const next = addTemplate(name.trim(), description.trim());
+    setTemplates(next);
+    setTab("templates");
+  };
+
+  const useTemplate = (t: PromptTemplate) => {
+    setDescription(t.description);
+    setTab("generate");
+  };
+
+  const removeTpl = (id: string) => {
+    if (!confirm("Excluir este template?")) return;
+    setTemplates(removeTemplate(id));
+  };
+
+  const a = history.find((h) => h.id === compareIds[0]) ?? null;
+  const b = history.find((h) => h.id === compareIds[1]) ?? null;
+  const compareDiff = a && b ? diffFlows(a.flow, b.flow) : null;
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-      <div className="flex max-h-[90vh] w-full max-w-3xl flex-col overflow-hidden rounded-xl border border-border bg-card shadow-2xl">
+      <div className="flex max-h-[92vh] w-full max-w-3xl flex-col overflow-hidden rounded-xl border border-border bg-card shadow-2xl">
         <header className="flex shrink-0 items-center justify-between border-b border-border px-5 py-3">
           <div>
             <h2 className="text-lg font-bold">🤖 Agente IA — Gerador de Fluxograma</h2>
             <p className="text-xs text-muted-foreground">
-              Cole o enunciado do problema e a IA monta o fluxograma usando os símbolos ISO 5807.
+              Cole o enunciado, salve como template e compare versões geradas.
             </p>
           </div>
           <button onClick={onClose} className="rounded-md p-1 hover:bg-muted" aria-label="Fechar">✕</button>
         </header>
 
-        <div className="flex-1 space-y-4 overflow-y-auto p-5">
-          <div>
-            <div className="mb-1 flex items-center justify-between">
-              <label className="text-xs font-bold uppercase tracking-widest text-muted-foreground">
-                Descrição / enunciado do problema
-              </label>
-              <button
-                onClick={() => setDescription(EXAMPLE)}
-                className="text-[11px] text-primary hover:underline"
-                type="button"
-              >
-                Carregar exemplo (AOP2 UVV)
-              </button>
-            </div>
-            <textarea
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-              rows={10}
-              placeholder="Ex: Faça um algoritmo que leia 100 alunos, suas notas AOP1, AOP2, AOP3 e a prova regular..."
-              className="w-full resize-y rounded-md border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
-            />
-            <p className="mt-1 text-[11px] text-muted-foreground">
-              Dica: descreva entradas, regras de decisão (se/senão), laços e saídas. Quanto mais claro o enunciado, melhor o fluxograma.
-            </p>
-          </div>
-
-          <div className="flex items-center gap-2">
+        <nav className="flex shrink-0 gap-1 border-b border-border bg-muted/40 px-3 py-1.5">
+          {([
+            ["generate", "✨ Gerar"],
+            ["templates", `📚 Templates (${templates.length})`],
+            ["history", `🕘 Histórico (${history.length})`],
+          ] as [Tab, string][]).map(([k, l]) => (
             <button
-              onClick={onGenerate}
-              disabled={loading}
-              className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:opacity-90 disabled:opacity-50"
+              key={k}
+              onClick={() => setTab(k)}
+              className={`rounded-md px-3 py-1.5 text-xs font-medium transition ${
+                tab === k ? "bg-card text-foreground shadow-sm" : "text-muted-foreground hover:bg-card/60"
+              }`}
             >
-              {loading ? "Gerando…" : "✨ Gerar fluxograma"}
+              {l}
             </button>
-            {pending && (
-              <>
-                <button
-                  onClick={() => apply("replace")}
-                  className="rounded-md bg-emerald-600 px-3 py-2 text-sm font-medium text-white hover:opacity-90"
-                >
-                  Aplicar (substituir canvas)
-                </button>
-                <button
-                  onClick={() => apply("merge")}
-                  className="rounded-md border border-border px-3 py-2 text-sm hover:bg-muted"
-                >
-                  Mesclar com atual
-                </button>
-              </>
-            )}
-          </div>
+          ))}
+        </nav>
 
-          {error && (
-            <div className="rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
-              {error}
+        <div className="flex-1 space-y-4 overflow-y-auto p-5">
+          {tab === "generate" && (
+            <>
+              <div>
+                <div className="mb-1 flex items-center justify-between">
+                  <label className="text-xs font-bold uppercase tracking-widest text-muted-foreground">
+                    Descrição / enunciado do problema
+                  </label>
+                  <button
+                    onClick={onSaveTemplate}
+                    className="text-[11px] text-primary hover:underline"
+                    type="button"
+                  >
+                    💾 Salvar como template
+                  </button>
+                </div>
+                <textarea
+                  value={description}
+                  onChange={(e) => setDescription(e.target.value)}
+                  rows={10}
+                  placeholder="Ex: Faça um algoritmo que leia 100 alunos, suas notas AOP1, AOP2, AOP3 e a prova regular..."
+                  className="w-full resize-y rounded-md border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                />
+                <p className="mt-1 text-[11px] text-muted-foreground">
+                  Dica: descreva entradas, regras de decisão (se/senão), laços e saídas.
+                </p>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  onClick={onGenerate}
+                  disabled={loading}
+                  className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:opacity-90 disabled:opacity-50"
+                >
+                  {loading ? "Gerando…" : "✨ Gerar fluxograma"}
+                </button>
+                {pending && (
+                  <>
+                    <button
+                      onClick={() => apply("replace")}
+                      disabled={errors.length > 0}
+                      className="rounded-md bg-emerald-600 px-3 py-2 text-sm font-medium text-white hover:opacity-90 disabled:opacity-40"
+                      title={errors.length > 0 ? "Corrija os erros ISO 5807 antes de aplicar" : ""}
+                    >
+                      Aplicar (substituir)
+                    </button>
+                    <button
+                      onClick={() => apply("merge")}
+                      className="rounded-md border border-border px-3 py-2 text-sm hover:bg-muted"
+                    >
+                      Mesclar com atual
+                    </button>
+                  </>
+                )}
+              </div>
+
+              {error && (
+                <div className="rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
+                  {error}
+                </div>
+              )}
+
+              {pending && (
+                <div className="space-y-2">
+                  <div className="rounded-lg border border-emerald-500/40 bg-emerald-500/5 p-3 text-sm">
+                    <p className="font-semibold text-emerald-700 dark:text-emerald-400">
+                      ✓ Pronto: {pending.nodes.length} símbolos · {pending.edges.length} conexões
+                    </p>
+                    {summary && <p className="mt-1 text-xs text-muted-foreground">{summary}</p>}
+                  </div>
+
+                  <div
+                    className={`rounded-lg border p-3 text-xs ${
+                      errors.length > 0
+                        ? "border-destructive/50 bg-destructive/5"
+                        : warnings.length > 0
+                        ? "border-amber-500/40 bg-amber-500/5"
+                        : "border-emerald-500/40 bg-emerald-500/5"
+                    }`}
+                  >
+                    <p className="mb-1 font-bold uppercase tracking-widest">
+                      Validação ISO 5807 ·{" "}
+                      {errors.length > 0
+                        ? `${errors.length} erro(s)`
+                        : warnings.length > 0
+                        ? `${warnings.length} aviso(s)`
+                        : "íntegro"}
+                    </p>
+                    {validation.length === 0 ? (
+                      <p className="text-muted-foreground">
+                        Tem Início/Fim, decisões com Sim/Não e nenhuma conexão inconsistente.
+                      </p>
+                    ) : (
+                      <ul className="max-h-32 space-y-1 overflow-y-auto">
+                        {validation.map((v, i) => (
+                          <li key={i} className="flex gap-1.5">
+                            <span className={v.level === "error" ? "text-destructive" : "text-amber-600"}>●</span>
+                            <span>{v.msg}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+                </div>
+              )}
+            </>
+          )}
+
+          {tab === "templates" && (
+            <div className="space-y-2">
+              <p className="text-xs text-muted-foreground">
+                Templates salvos no navegador. Use para repetir enunciados (AOP1/AOP2/AOP3 UVV) sem reescrever.
+              </p>
+              {templates.length === 0 && (
+                <p className="rounded-md border border-dashed border-border p-6 text-center text-sm text-muted-foreground">
+                  Nenhum template ainda. Vá em <b>Gerar</b> e clique em <b>Salvar como template</b>.
+                </p>
+              )}
+              {templates.map((t) => (
+                <div key={t.id} className="rounded-lg border border-border bg-background p-3">
+                  <div className="mb-1 flex items-start justify-between gap-2">
+                    <h4 className="text-sm font-semibold">{t.name}</h4>
+                    <div className="flex shrink-0 gap-1">
+                      <button
+                        onClick={() => useTemplate(t)}
+                        className="rounded bg-primary px-2 py-1 text-[11px] font-medium text-primary-foreground hover:opacity-90"
+                      >
+                        Usar
+                      </button>
+                      <button
+                        onClick={() => removeTpl(t.id)}
+                        className="rounded border border-border px-2 py-1 text-[11px] text-destructive hover:bg-destructive/10"
+                      >
+                        Excluir
+                      </button>
+                    </div>
+                  </div>
+                  <p className="line-clamp-3 whitespace-pre-wrap text-xs text-muted-foreground">
+                    {t.description}
+                  </p>
+                </div>
+              ))}
             </div>
           )}
 
-          {pending && (
-            <div className="rounded-lg border border-emerald-500/40 bg-emerald-500/5 p-3 text-sm">
-              <p className="font-semibold text-emerald-700 dark:text-emerald-400">
-                ✓ Pronto: {pending.nodes.length} símbolos · {pending.edges.length} conexões
-              </p>
-              {summary && <p className="mt-1 text-xs text-muted-foreground">{summary}</p>}
-              <p className="mt-2 text-[11px] text-muted-foreground">
-                Revise a proposta antes de aplicar — você ainda poderá arrastar, editar e validar no editor.
-              </p>
+          {tab === "history" && (
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <p className="text-xs text-muted-foreground">
+                  Últimas {history.length} gerações. Selecione 2 para comparar.
+                </p>
+                {history.length > 0 && (
+                  <button
+                    onClick={() => {
+                      if (confirm("Limpar todo o histórico?")) {
+                        setHistory(clearHistory());
+                        setCompareIds([null, null]);
+                      }
+                    }}
+                    className="text-[11px] text-destructive hover:underline"
+                  >
+                    Limpar tudo
+                  </button>
+                )}
+              </div>
+
+              {history.length === 0 && (
+                <p className="rounded-md border border-dashed border-border p-6 text-center text-sm text-muted-foreground">
+                  Nenhuma geração ainda. Gere um fluxograma para começar o histórico.
+                </p>
+              )}
+
+              {compareDiff && a && b && (
+                <div className="rounded-lg border border-primary/40 bg-primary/5 p-3 text-xs">
+                  <p className="mb-1 font-bold uppercase tracking-widest text-primary">
+                    Comparação A → B
+                  </p>
+                  <p className="text-muted-foreground">
+                    A: {new Date(a.createdAt).toLocaleString()} · {a.flow.nodes.length} símbolos
+                  </p>
+                  <p className="mb-2 text-muted-foreground">
+                    B: {new Date(b.createdAt).toLocaleString()} · {b.flow.nodes.length} símbolos
+                  </p>
+                  <ul className="space-y-0.5">
+                    <li>+ {compareDiff.addedNodes} símbolos novos em B</li>
+                    <li>− {compareDiff.removedNodes} símbolos removidos em B</li>
+                    <li>+ {compareDiff.addedEdges} conexões adicionadas</li>
+                    <li>− {compareDiff.removedEdges} conexões removidas</li>
+                  </ul>
+                </div>
+              )}
+
+              {history.map((h) => {
+                const isA = compareIds[0] === h.id;
+                const isB = compareIds[1] === h.id;
+                return (
+                  <div
+                    key={h.id}
+                    className={`rounded-lg border p-3 ${
+                      isA || isB ? "border-primary/60 bg-primary/5" : "border-border bg-background"
+                    }`}
+                  >
+                    <div className="mb-1 flex items-start justify-between gap-2">
+                      <div>
+                        <h4 className="text-sm font-semibold">{h.title}</h4>
+                        <p className="text-[11px] text-muted-foreground">
+                          {new Date(h.createdAt).toLocaleString()} · {h.flow.nodes.length} símbolos ·{" "}
+                          {h.flow.edges.length} conexões
+                        </p>
+                      </div>
+                      <div className="flex shrink-0 flex-wrap justify-end gap-1">
+                        <button
+                          onClick={() =>
+                            setCompareIds(([prevA, prevB]) => {
+                              if (prevA === h.id) return [null, prevB];
+                              if (prevB === h.id) return [prevA, null];
+                              if (!prevA) return [h.id, prevB];
+                              if (!prevB) return [prevA, h.id];
+                              return [prevB, h.id];
+                            })
+                          }
+                          className={`rounded border px-2 py-1 text-[11px] ${
+                            isA || isB
+                              ? "border-primary bg-primary text-primary-foreground"
+                              : "border-border hover:bg-muted"
+                          }`}
+                        >
+                          {isA ? "A ✓" : isB ? "B ✓" : "Comparar"}
+                        </button>
+                        <button
+                          onClick={() => apply("replace", h.flow)}
+                          className="rounded bg-emerald-600 px-2 py-1 text-[11px] font-medium text-white hover:opacity-90"
+                          title="Restaurar esta versão no canvas"
+                        >
+                          ↺ Restaurar
+                        </button>
+                        <button
+                          onClick={() => apply("merge", h.flow)}
+                          className="rounded border border-border px-2 py-1 text-[11px] hover:bg-muted"
+                        >
+                          Mesclar
+                        </button>
+                        <button
+                          onClick={() => {
+                            setDescription(h.description);
+                            setTab("generate");
+                          }}
+                          className="rounded border border-border px-2 py-1 text-[11px] hover:bg-muted"
+                          title="Carregar enunciado para regenerar"
+                        >
+                          Replicar
+                        </button>
+                        <button
+                          onClick={() => {
+                            if (confirm("Excluir esta versão do histórico?")) {
+                              setHistory(removeHistory(h.id));
+                              setCompareIds(([pa, pb]) => [pa === h.id ? null : pa, pb === h.id ? null : pb]);
+                            }
+                          }}
+                          className="rounded border border-border px-2 py-1 text-[11px] text-destructive hover:bg-destructive/10"
+                        >
+                          ✕
+                        </button>
+                      </div>
+                    </div>
+                    <p className="line-clamp-2 text-[11px] text-muted-foreground">{h.description}</p>
+                  </div>
+                );
+              })}
             </div>
           )}
-
-          <details className="rounded-md bg-muted/40 p-3 text-xs">
-            <summary className="cursor-pointer font-semibold">Como o agente funciona?</summary>
-            <p className="mt-2 leading-relaxed">
-              O agente usa um modelo de linguagem (Lovable AI) com saída estruturada em JSON. O prompt do sistema descreve cada símbolo ISO 5807 e impõe regras pedagógicas: sempre Início/Fim, decisões com 2 saídas Sim/Não, laços com preparation+decision, etc. O posicionamento dos símbolos é calculado por um layout em camadas top-down — você reorganiza arrastando.
-            </p>
-          </details>
         </div>
       </div>
     </div>
