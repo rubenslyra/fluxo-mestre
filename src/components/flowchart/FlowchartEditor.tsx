@@ -253,9 +253,24 @@ export function FlowchartEditor() {
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement;
+      const inField = target.tagName === "INPUT" || target.tagName === "TEXTAREA";
+      const mod = e.ctrlKey || e.metaKey;
+      if (mod && (e.key === "z" || e.key === "Z")) {
+        if (inField) return;
+        e.preventDefault();
+        if (e.shiftKey) redo();
+        else undo();
+        return;
+      }
+      if (mod && (e.key === "y" || e.key === "Y")) {
+        if (inField) return;
+        e.preventDefault();
+        redo();
+        return;
+      }
       if ((e.key === "Delete" || e.key === "Backspace") && selected) {
-        const target = e.target as HTMLElement;
-        if (target.tagName === "INPUT" || target.tagName === "TEXTAREA") return;
+        if (inField) return;
         deleteSelected();
       }
     };
