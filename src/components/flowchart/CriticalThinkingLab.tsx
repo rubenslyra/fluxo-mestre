@@ -38,25 +38,41 @@ function escapeHtml(s: string) {
   return s.replace(/[&<>"']/g, (m) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[m]!));
 }
 
-function exportPrintable(c: Challenge, objections: StudentObjection[]) {
+type PrintOptions = {
+  paper: "A4" | "Letter";
+  margin: "estreita" | "normal" | "larga";
+  separateSections: boolean;
+};
+
+const MARGIN_CSS: Record<PrintOptions["margin"], string> = {
+  estreita: "12mm",
+  normal: "20mm",
+  larga: "30mm",
+};
+
+function exportPrintable(c: Challenge, objections: StudentObjection[], opts: PrintOptions) {
+  const pageBreakObj = opts.separateSections ? "page-break-before:always;" : "page-break-inside:avoid;";
   const html = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"/>
 <title>${escapeHtml(c.title)} — Material de aula</title>
 <style>
-  body{font-family:Georgia,serif;max-width:780px;margin:24px auto;padding:0 24px;color:#111;line-height:1.55}
+  @page { size: ${opts.paper}; margin: ${MARGIN_CSS[opts.margin]}; }
+  body{font-family:Georgia,serif;color:#111;line-height:1.55}
   h1{font-size:26px;margin-bottom:4px}
   h2{font-size:16px;text-transform:uppercase;letter-spacing:.08em;color:#444;margin-top:28px;border-bottom:1px solid #ccc;padding-bottom:4px}
   .meta{color:#666;font-size:13px;margin-bottom:18px}
   .box{background:#f6f6f6;border-left:4px solid #2563eb;padding:12px 16px;margin:12px 0}
   ul{padding-left:20px}
   li{margin:4px 0}
-  .obj{border:1px solid #ddd;border-radius:6px;padding:10px 14px;margin:10px 0;page-break-inside:avoid}
-  .obj .q{font-weight:bold}
-  .obj .a{margin-top:6px;color:#222}
+  .obj{border:1px solid #ddd;border-radius:6px;padding:14px 18px;margin:12px 0;${pageBreakObj}}
+  .obj h3{margin:0 0 6px;font-size:14px;color:#2563eb;text-transform:uppercase;letter-spacing:.06em}
+  .obj .q{font-weight:bold;font-size:15px}
+  .obj .a{margin-top:8px;color:#222}
+  .tag{display:inline-block;background:#eef2ff;color:#3730a3;font-size:11px;padding:2px 8px;border-radius:10px;margin-right:6px;text-transform:uppercase;letter-spacing:.05em}
   footer{margin-top:40px;color:#888;font-size:11px;text-align:center;border-top:1px solid #eee;padding-top:8px}
-  @media print{body{margin:0}}
+  .page-break{page-break-before:always}
 </style></head><body>
 <h1>${escapeHtml(c.title)}</h1>
-<div class="meta">${escapeHtml(c.category)} · ${escapeHtml(c.difficulty)} · Conceito: ${escapeHtml(c.logicConcept)}</div>
+<div class="meta">${escapeHtml(c.category)} · ${escapeHtml(c.difficulty)} · Conceito: ${escapeHtml(c.logicConcept)} · Papel ${opts.paper}</div>
 
 <h2>Cenário</h2>
 <p>${escapeHtml(c.scenario)}</p>
@@ -70,9 +86,10 @@ function exportPrintable(c: Challenge, objections: StudentObjection[]) {
 
 <h2>Respostas prontas para objeções dos alunos</h2>
 ${objections
-  .map(
-    (o) => `<div class="obj"><div class="q">💬 ${escapeHtml(o.question)}</div><div class="a">${escapeHtml(o.answer)}</div></div>`,
-  )
+  .map((o, i) => {
+    const tag = TAG_LABEL[classifyObjection(o.question)];
+    return `<div class="obj"><h3>Objeção ${i + 1}</h3><span class="tag">${escapeHtml(tag)}</span><div class="q">💬 ${escapeHtml(o.question)}</div><div class="a">${escapeHtml(o.answer)}</div></div>`;
+  })
   .join("")}
 
 <footer>FluxoLab · Material de apoio para aula · Imprima ou salve como PDF (Ctrl/Cmd+P)</footer>
@@ -87,6 +104,16 @@ ${objections
   w.document.open();
   w.document.write(html);
   w.document.close();
+}
+
+function downloadJSON(filename: string, payload: unknown) {
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
 }
 
 export function CriticalThinkingLab() {
