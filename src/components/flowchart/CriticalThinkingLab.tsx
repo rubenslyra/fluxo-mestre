@@ -161,16 +161,26 @@ export function CriticalThinkingLab() {
   };
 
   const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase();
     return CHALLENGES.filter((c) => {
       if (filter !== "todos" && c.difficulty !== filter) return false;
+      const objs = getEffectiveObjections(c, objOverrides);
       if (tagFilter !== "todos") {
-        const objs = getEffectiveObjections(c, objOverrides);
         const hasTag = objs.some((o) => classifyObjection(o.question) === tagFilter);
         if (!hasTag) return false;
       }
+      if (q) {
+        const tagLabels = objs.map((o) => TAG_LABEL[classifyObjection(o.question)].toLowerCase());
+        const hit =
+          c.title.toLowerCase().includes(q) ||
+          c.scenario.toLowerCase().includes(q) ||
+          objs.some((o) => o.question.toLowerCase().includes(q) || o.answer.toLowerCase().includes(q)) ||
+          tagLabels.some((t) => t.includes(q));
+        if (!hit) return false;
+      }
       return true;
     });
-  }, [filter, tagFilter, objOverrides]);
+  }, [filter, tagFilter, search, objOverrides]);
 
   const active = CHALLENGES.find((c) => c.id === activeId) ?? CHALLENGES[0];
   const prog = getProg(active.id);
