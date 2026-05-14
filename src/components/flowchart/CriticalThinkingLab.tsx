@@ -344,13 +344,61 @@ export function CriticalThinkingLab() {
               <h1 className="mt-2 text-3xl font-bold tracking-tight">{active.title}</h1>
               <p className="mt-2 text-sm font-medium text-primary">Conceito lógico: {active.logicConcept}</p>
             </div>
-            <button
-              onClick={() => exportPrintable(active, objections)}
-              className="shrink-0 rounded-md border border-border bg-card px-3 py-2 text-xs font-medium hover:bg-muted"
-              title="Abre uma janela formatada para imprimir ou salvar como PDF"
-            >
-              🖨️ Exportar material da aula (PDF)
-            </button>
+            <div className="relative shrink-0">
+              <button
+                onClick={() => setShowPrintMenu((v) => !v)}
+                className="rounded-md border border-border bg-card px-3 py-2 text-xs font-medium hover:bg-muted"
+                title="Configurar e exportar PDF"
+              >
+                🖨️ Exportar PDF ▾
+              </button>
+              {showPrintMenu && (
+                <div className="absolute right-0 top-full z-20 mt-1 w-72 space-y-3 rounded-lg border border-border bg-card p-4 shadow-xl">
+                  <div>
+                    <p className="mb-1 text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Tamanho do papel</p>
+                    <div className="flex gap-1">
+                      {(["A4", "Letter"] as const).map((p) => (
+                        <button
+                          key={p}
+                          onClick={() => setPrintOpts((o) => ({ ...o, paper: p }))}
+                          className={`flex-1 rounded-md px-2 py-1 text-xs ${printOpts.paper === p ? "bg-primary text-primary-foreground" : "border border-border hover:bg-muted"}`}
+                        >
+                          {p}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <div>
+                    <p className="mb-1 text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Margens</p>
+                    <div className="flex gap-1">
+                      {(["estreita", "normal", "larga"] as const).map((m) => (
+                        <button
+                          key={m}
+                          onClick={() => setPrintOpts((o) => ({ ...o, margin: m }))}
+                          className={`flex-1 rounded-md px-2 py-1 text-xs capitalize ${printOpts.margin === m ? "bg-primary text-primary-foreground" : "border border-border hover:bg-muted"}`}
+                        >
+                          {m}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <label className="flex items-center gap-2 text-xs">
+                    <input
+                      type="checkbox"
+                      checked={printOpts.separateSections}
+                      onChange={(e) => setPrintOpts((o) => ({ ...o, separateSections: e.target.checked }))}
+                    />
+                    Cada objeção em página/seção separada
+                  </label>
+                  <button
+                    onClick={() => { exportPrintable(active, objections, printOpts); setShowPrintMenu(false); }}
+                    className="w-full rounded-md bg-primary px-3 py-2 text-xs font-medium text-primary-foreground hover:opacity-90"
+                  >
+                    Gerar PDF agora
+                  </button>
+                </div>
+              )}
+            </div>
           </header>
 
           {/* Cenário */}
