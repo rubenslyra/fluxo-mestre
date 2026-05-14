@@ -342,6 +342,24 @@ export function FlowchartEditor() {
           </span>
         </div>
         <div className="flex items-center gap-2">
+          <div className="mr-1 flex overflow-hidden rounded-md border border-border">
+            <button
+              onClick={undo}
+              disabled={past.length === 0}
+              title="Desfazer (Ctrl+Z)"
+              className="px-2 py-1.5 text-sm hover:bg-muted disabled:opacity-30"
+            >
+              ↶ Desfazer
+            </button>
+            <button
+              onClick={redo}
+              disabled={future.length === 0}
+              title="Refazer (Ctrl+Shift+Z / Ctrl+Y)"
+              className="border-l border-border px-2 py-1.5 text-sm hover:bg-muted disabled:opacity-30"
+            >
+              ↷ Refazer
+            </button>
+          </div>
           <button
             onClick={() => setAiOpen(true)}
             className="rounded-md bg-gradient-to-r from-violet-600 to-fuchsia-600 px-3 py-1.5 text-sm font-medium text-white hover:opacity-90"
@@ -365,52 +383,79 @@ export function FlowchartEditor() {
             Exportar JSON
           </button>
           <div className="relative">
-            <button
-              onClick={() => setExportMenu((v) => !v)}
-              className="rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground hover:opacity-90"
-            >
-              Exportar imagem ▾
-            </button>
+            <div className="flex overflow-hidden rounded-md">
+              <button
+                onClick={() => {
+                  if (exportFormat === "png") void exportPNG(exportScale);
+                  else exportSVG();
+                }}
+                className="bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground hover:opacity-90"
+                title="Repete a última escolha de exportação"
+              >
+                Exportar {exportFormat === "png" ? `PNG ${exportScale}x` : "SVG"}
+              </button>
+              <button
+                onClick={() => setExportMenu((v) => !v)}
+                className="border-l border-primary-foreground/20 bg-primary px-2 py-1.5 text-sm font-medium text-primary-foreground hover:opacity-90"
+                title="Opções de exportação"
+              >
+                ▾
+              </button>
+            </div>
             {exportMenu && (
               <div className="absolute right-0 top-full z-50 mt-1 w-64 rounded-md border border-border bg-card p-3 text-sm shadow-xl">
                 <p className="mb-2 text-[11px] font-bold uppercase tracking-widest text-muted-foreground">
-                  Escala (PNG)
+                  Formato
                 </p>
                 <div className="mb-3 flex gap-1">
-                  {[1, 2, 3, 4].map((s) => (
+                  {(["png", "svg"] as ExportFormat[]).map((f) => (
                     <button
-                      key={s}
-                      onClick={() => setExportScale(s)}
-                      className={`flex-1 rounded border px-2 py-1 text-xs ${
-                        exportScale === s
+                      key={f}
+                      onClick={() => setExportFormat(f)}
+                      className={`flex-1 rounded border px-2 py-1 text-xs uppercase ${
+                        exportFormat === f
                           ? "border-primary bg-primary/10 font-semibold text-primary"
                           : "border-border hover:bg-muted"
                       }`}
                     >
-                      {s}x
+                      {f}
                     </button>
                   ))}
                 </div>
+                {exportFormat === "png" && (
+                  <>
+                    <p className="mb-2 text-[11px] font-bold uppercase tracking-widest text-muted-foreground">
+                      Escala (PNG)
+                    </p>
+                    <div className="mb-3 flex gap-1">
+                      {[1, 2, 3, 4].map((s) => (
+                        <button
+                          key={s}
+                          onClick={() => setExportScale(s)}
+                          className={`flex-1 rounded border px-2 py-1 text-xs ${
+                            exportScale === s
+                              ? "border-primary bg-primary/10 font-semibold text-primary"
+                              : "border-border hover:bg-muted"
+                          }`}
+                        >
+                          {s}x
+                        </button>
+                      ))}
+                    </div>
+                  </>
+                )}
                 <button
                   onClick={() => {
                     setExportMenu(false);
-                    void exportPNG(exportScale);
+                    if (exportFormat === "png") void exportPNG(exportScale);
+                    else exportSVG();
                   }}
-                  className="mb-1 w-full rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground hover:opacity-90"
+                  className="w-full rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground hover:opacity-90"
                 >
-                  Baixar PNG ({exportScale}x)
-                </button>
-                <button
-                  onClick={() => {
-                    setExportMenu(false);
-                    exportSVG();
-                  }}
-                  className="w-full rounded-md border border-border px-3 py-1.5 text-xs hover:bg-muted"
-                >
-                  Baixar SVG (vetorial)
+                  Baixar {exportFormat === "png" ? `PNG (${exportScale}x)` : "SVG"}
                 </button>
                 <p className="mt-2 text-[10px] text-muted-foreground">
-                  PNG ideal para apresentações/impressão. SVG mantém qualidade infinita.
+                  Sua escolha fica salva entre sessões.
                 </p>
               </div>
             )}
