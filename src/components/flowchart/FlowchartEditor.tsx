@@ -265,7 +265,10 @@ export function FlowchartEditor() {
 
   const promptLabel = (node: FlowNode) => {
     const v = window.prompt("Texto do símbolo:", node.label);
-    if (v !== null) updateNode(node.id, { label: v });
+    if (v !== null && v !== node.label) {
+      commit();
+      updateNode(node.id, { label: v });
+    }
   };
 
   const getInner = () => svgRef.current?.querySelector("#world")?.innerHTML ?? "";
