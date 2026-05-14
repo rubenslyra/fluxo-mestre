@@ -485,17 +485,21 @@ export function FlowchartEditor() {
               })()}
 
               {/* nodes */}
-              {doc.nodes.map((n) => (
-                <NodeShape
-                  key={n.id}
-                  node={n}
-                  selected={selected === n.id}
-                  onMouseDown={(e) => handleNodeMouseDown(n, e)}
-                  onDoubleClick={() => promptLabel(n)}
-                  onPortMouseDown={(_, e) => startEdge(n.id, e)}
-                  onPortMouseUp={() => finishEdgeOn(n.id)}
-                />
-              ))}
+              {doc.nodes.map((n) => {
+                const dim = matchedIds && !matchedIds.has(n.id);
+                return (
+                  <g key={n.id} style={{ opacity: dim ? 0.25 : 1, transition: "opacity .15s" }}>
+                    <NodeShape
+                      node={n}
+                      selected={selected === n.id || (matchedIds?.has(n.id) ?? false)}
+                      onMouseDown={(e) => handleNodeMouseDown(n, e)}
+                      onDoubleClick={() => promptLabel(n)}
+                      onPortMouseDown={(_, e) => startEdge(n.id, e)}
+                      onPortMouseUp={() => finishEdgeOn(n.id)}
+                    />
+                  </g>
+                );
+              })}
             </g>
           </svg>
 
