@@ -41,18 +41,78 @@ function uid() {
   return Math.random().toString(36).slice(2, 9);
 }
 
+const EXPORT_PREFS_KEY = "flowchart-export-prefs-v1";
+type ExportFormat = "png" | "svg";
+function loadExportPrefs(): { format: ExportFormat; scale: number } {
+  if (typeof window === "undefined") return { format: "png", scale: 2 };
+  try {
+    const raw = localStorage.getItem(EXPORT_PREFS_KEY);
+    if (raw) {
+      const p = JSON.parse(raw);
+      const scale = Math.max(1, Math.min(4, Number(p.scale) || 2));
+      const format: ExportFormat = p.format === "svg" ? "svg" : "png";
+      return { format, scale };
+    }
+  } catch {}
+  return { format: "png", scale: 2 };
+}
+
 export function FlowchartEditor() {
-  const [doc, setDoc] = useState<FlowDoc>(() => loadDoc());
+  const [doc, setDocRaw] = useState<FlowDoc>(() => loadDoc());
+  const [past, setPast] = useState<FlowDoc[]>([]);
+  const [future, setFuture] = useState<FlowDoc[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
   const [view, setView] = useState({ x: 0, y: 0, k: 1 });
   const [pendingEdge, setPendingEdge] = useState<{ from: string; x: number; y: number } | null>(null);
   const [aiOpen, setAiOpen] = useState(false);
   const [search, setSearch] = useState("");
   const [exportMenu, setExportMenu] = useState(false);
-  const [exportScale, setExportScale] = useState(2);
+  const initialPrefs = loadExportPrefs();
+  const [exportScale, setExportScale] = useState(initialPrefs.scale);
+  const [exportFormat, setExportFormat] = useState<ExportFormat>(initialPrefs.format);
+  useEffect(() => {
+    try {
+      localStorage.setItem(EXPORT_PREFS_KEY, JSON.stringify({ format: exportFormat, scale: exportScale }));
+    } catch {}
+  }, [exportFormat, exportScale]);
   const svgRef = useRef<SVGSVGElement>(null);
   const dragRef = useRef<{ id: string; offX: number; offY: number } | null>(null);
   const panRef = useRef<{ x: number; y: number; vx: number; vy: number } | null>(null);
+  const docRef = useRef(doc);
+  docRef.current = doc;
+
+  // Snapshot current doc into the undo stack and clear redo
+  const commit = useCallback(() => {
+    setPast((p) => [...p.slice(-49), JSON.parse(JSON.stringify(docRef.current)) as FlowDoc]);
+    setFuture([]);
+  }, []);
+
+  // setDoc that also commits the previous state to history
+  type DocUpdater = FlowDoc | ((d: FlowDoc) => FlowDoc);
+  const setDoc = useCallback((updater: DocUpdater) => {
+    commit();
+    setDocRaw((d) => (typeof updater === "function" ? (updater as (d: FlowDoc) => FlowDoc)(d) : updater));
+  }, [commit]);
+
+  const undo = useCallback(() => {
+    setPast((p) => {
+      if (p.length === 0) return p;
+      const prev = p[p.length - 1];
+      setFuture((f) => [JSON.parse(JSON.stringify(docRef.current)) as FlowDoc, ...f].slice(0, 50));
+      setDocRaw(prev);
+      return p.slice(0, -1);
+    });
+  }, []);
+
+  const redo = useCallback(() => {
+    setFuture((f) => {
+      if (f.length === 0) return f;
+      const next = f[0];
+      setPast((p) => [...p.slice(-49), JSON.parse(JSON.stringify(docRef.current)) as FlowDoc]);
+      setDocRaw(next);
+      return f.slice(1);
+    });
+  }, []);
 
   const matchedIds = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -112,8 +172,9 @@ export function FlowchartEditor() {
     setSelected(node.id);
   };
 
+  // updates that happen continuously (drag, typing) — bypass history; caller commits once at the start
   const updateNode = (id: string, patch: Partial<FlowNode>) =>
-    setDoc((d) => ({ ...d, nodes: d.nodes.map((n) => (n.id === id ? { ...n, ...patch } : n)) }));
+    setDocRaw((d) => ({ ...d, nodes: d.nodes.map((n) => (n.id === id ? { ...n, ...patch } : n)) }));
 
   const deleteSelected = () => {
     if (!selected) return;
@@ -128,6 +189,7 @@ export function FlowchartEditor() {
     e.stopPropagation();
     setSelected(node.id);
     const w = screenToWorld(e.clientX, e.clientY);
+    commit(); // snapshot before drag
     dragRef.current = { id: node.id, offX: w.x - node.x, offY: w.y - node.y };
   };
 
@@ -191,9 +253,24 @@ export function FlowchartEditor() {
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement;
+      const inField = target.tagName === "INPUT" || target.tagName === "TEXTAREA";
+      const mod = e.ctrlKey || e.metaKey;
+      if (mod && (e.key === "z" || e.key === "Z")) {
+        if (inField) return;
+        e.preventDefault();
+        if (e.shiftKey) redo();
+        else undo();
+        return;
+      }
+      if (mod && (e.key === "y" || e.key === "Y")) {
+        if (inField) return;
+        e.preventDefault();
+        redo();
+        return;
+      }
       if ((e.key === "Delete" || e.key === "Backspace") && selected) {
-        const target = e.target as HTMLElement;
-        if (target.tagName === "INPUT" || target.tagName === "TEXTAREA") return;
+        if (inField) return;
         deleteSelected();
       }
     };
@@ -203,7 +280,10 @@ export function FlowchartEditor() {
 
   const promptLabel = (node: FlowNode) => {
     const v = window.prompt("Texto do símbolo:", node.label);
-    if (v !== null) updateNode(node.id, { label: v });
+    if (v !== null && v !== node.label) {
+      commit();
+      updateNode(node.id, { label: v });
+    }
   };
 
   const getInner = () => svgRef.current?.querySelector("#world")?.innerHTML ?? "";
@@ -262,6 +342,24 @@ export function FlowchartEditor() {
           </span>
         </div>
         <div className="flex items-center gap-2">
+          <div className="mr-1 flex overflow-hidden rounded-md border border-border">
+            <button
+              onClick={undo}
+              disabled={past.length === 0}
+              title="Desfazer (Ctrl+Z)"
+              className="px-2 py-1.5 text-sm hover:bg-muted disabled:opacity-30"
+            >
+              ↶ Desfazer
+            </button>
+            <button
+              onClick={redo}
+              disabled={future.length === 0}
+              title="Refazer (Ctrl+Shift+Z / Ctrl+Y)"
+              className="border-l border-border px-2 py-1.5 text-sm hover:bg-muted disabled:opacity-30"
+            >
+              ↷ Refazer
+            </button>
+          </div>
           <button
             onClick={() => setAiOpen(true)}
             className="rounded-md bg-gradient-to-r from-violet-600 to-fuchsia-600 px-3 py-1.5 text-sm font-medium text-white hover:opacity-90"
@@ -285,52 +383,79 @@ export function FlowchartEditor() {
             Exportar JSON
           </button>
           <div className="relative">
-            <button
-              onClick={() => setExportMenu((v) => !v)}
-              className="rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground hover:opacity-90"
-            >
-              Exportar imagem ▾
-            </button>
+            <div className="flex overflow-hidden rounded-md">
+              <button
+                onClick={() => {
+                  if (exportFormat === "png") void exportPNG(exportScale);
+                  else exportSVG();
+                }}
+                className="bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground hover:opacity-90"
+                title="Repete a última escolha de exportação"
+              >
+                Exportar {exportFormat === "png" ? `PNG ${exportScale}x` : "SVG"}
+              </button>
+              <button
+                onClick={() => setExportMenu((v) => !v)}
+                className="border-l border-primary-foreground/20 bg-primary px-2 py-1.5 text-sm font-medium text-primary-foreground hover:opacity-90"
+                title="Opções de exportação"
+              >
+                ▾
+              </button>
+            </div>
             {exportMenu && (
               <div className="absolute right-0 top-full z-50 mt-1 w-64 rounded-md border border-border bg-card p-3 text-sm shadow-xl">
                 <p className="mb-2 text-[11px] font-bold uppercase tracking-widest text-muted-foreground">
-                  Escala (PNG)
+                  Formato
                 </p>
                 <div className="mb-3 flex gap-1">
-                  {[1, 2, 3, 4].map((s) => (
+                  {(["png", "svg"] as ExportFormat[]).map((f) => (
                     <button
-                      key={s}
-                      onClick={() => setExportScale(s)}
-                      className={`flex-1 rounded border px-2 py-1 text-xs ${
-                        exportScale === s
+                      key={f}
+                      onClick={() => setExportFormat(f)}
+                      className={`flex-1 rounded border px-2 py-1 text-xs uppercase ${
+                        exportFormat === f
                           ? "border-primary bg-primary/10 font-semibold text-primary"
                           : "border-border hover:bg-muted"
                       }`}
                     >
-                      {s}x
+                      {f}
                     </button>
                   ))}
                 </div>
+                {exportFormat === "png" && (
+                  <>
+                    <p className="mb-2 text-[11px] font-bold uppercase tracking-widest text-muted-foreground">
+                      Escala (PNG)
+                    </p>
+                    <div className="mb-3 flex gap-1">
+                      {[1, 2, 3, 4].map((s) => (
+                        <button
+                          key={s}
+                          onClick={() => setExportScale(s)}
+                          className={`flex-1 rounded border px-2 py-1 text-xs ${
+                            exportScale === s
+                              ? "border-primary bg-primary/10 font-semibold text-primary"
+                              : "border-border hover:bg-muted"
+                          }`}
+                        >
+                          {s}x
+                        </button>
+                      ))}
+                    </div>
+                  </>
+                )}
                 <button
                   onClick={() => {
                     setExportMenu(false);
-                    void exportPNG(exportScale);
+                    if (exportFormat === "png") void exportPNG(exportScale);
+                    else exportSVG();
                   }}
-                  className="mb-1 w-full rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground hover:opacity-90"
+                  className="w-full rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground hover:opacity-90"
                 >
-                  Baixar PNG ({exportScale}x)
-                </button>
-                <button
-                  onClick={() => {
-                    setExportMenu(false);
-                    exportSVG();
-                  }}
-                  className="w-full rounded-md border border-border px-3 py-1.5 text-xs hover:bg-muted"
-                >
-                  Baixar SVG (vetorial)
+                  Baixar {exportFormat === "png" ? `PNG (${exportScale}x)` : "SVG"}
                 </button>
                 <p className="mt-2 text-[10px] text-muted-foreground">
-                  PNG ideal para apresentações/impressão. SVG mantém qualidade infinita.
+                  Sua escolha fica salva entre sessões.
                 </p>
               </div>
             )}
@@ -523,6 +648,7 @@ export function FlowchartEditor() {
               <label className="mb-1 block text-xs font-medium">Texto</label>
               <textarea
                 value={selectedNode.label}
+                onFocus={() => commit()}
                 onChange={(e) => updateNode(selectedNode.id, { label: e.target.value })}
                 className="w-full resize-none rounded-md border border-input bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
                 rows={3}

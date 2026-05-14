@@ -118,34 +118,101 @@ export function clearHistory(): AiHistoryEntry[] {
   return [];
 }
 
-export interface FlowDiff {
-  addedNodes: number;
-  removedNodes: number;
-  addedEdges: number;
-  removedEdges: number;
-  labelChanges: number;
+export interface EdgeKey {
+  from: string;
+  to: string;
+  label?: string;
 }
 
+export interface FlowDiff {
+  addedNodes: { label: string; kind: string }[];
+  removedNodes: { label: string; kind: string }[];
+  keptNodes: string[];
+  addedEdges: EdgeKey[];
+  removedEdges: EdgeKey[];
+}
+
+const norm = (s: string) => s.trim().toLowerCase().replace(/\s+/g, " ");
+
 export function diffFlows(a: FlowDoc, b: FlowDoc): FlowDiff {
-  const aLabels = new Map(a.nodes.map((n) => [n.label.trim().toLowerCase(), n]));
-  const bLabels = new Map(b.nodes.map((n) => [n.label.trim().toLowerCase(), n]));
-  let added = 0;
-  let removed = 0;
-  let labelChanges = 0;
-  bLabels.forEach((_n, k) => {
-    if (!aLabels.has(k)) added++;
+  const aNodes = new Map(a.nodes.map((n) => [norm(n.label), n]));
+  const bNodes = new Map(b.nodes.map((n) => [norm(n.label), n]));
+
+  const addedNodes: { label: string; kind: string }[] = [];
+  const removedNodes: { label: string; kind: string }[] = [];
+  const keptNodes: string[] = [];
+  bNodes.forEach((n, k) => {
+    if (!aNodes.has(k)) addedNodes.push({ label: n.label, kind: n.kind });
+    else keptNodes.push(n.label);
   });
-  aLabels.forEach((_n, k) => {
-    if (!bLabels.has(k)) removed++;
+  aNodes.forEach((n, k) => {
+    if (!bNodes.has(k)) removedNodes.push({ label: n.label, kind: n.kind });
   });
-  // edge counts
-  const ae = a.edges.length;
-  const be = b.edges.length;
-  return {
-    addedNodes: added,
-    removedNodes: removed,
-    addedEdges: Math.max(0, be - ae),
-    removedEdges: Math.max(0, ae - be),
-    labelChanges,
-  };
+
+  const labelOf = (doc: FlowDoc, id: string) =>
+    norm(doc.nodes.find((n) => n.id === id)?.label ?? id);
+  const edgeKey = (doc: FlowDoc, e: { from: string; to: string; label?: string }) =>
+    `${labelOf(doc, e.from)}→${labelOf(doc, e.to)}|${norm(e.label ?? "")}`;
+
+  const aEdges = new Map(a.edges.map((e) => [edgeKey(a, e), e]));
+  const bEdges = new Map(b.edges.map((e) => [edgeKey(b, e), e]));
+  const addedEdges: EdgeKey[] = [];
+  const removedEdges: EdgeKey[] = [];
+  bEdges.forEach((e, k) => {
+    if (!aEdges.has(k))
+      addedEdges.push({
+        from: b.nodes.find((n) => n.id === e.from)?.label ?? e.from,
+        to: b.nodes.find((n) => n.id === e.to)?.label ?? e.to,
+        label: e.label,
+      });
+  });
+  aEdges.forEach((e, k) => {
+    if (!bEdges.has(k))
+      removedEdges.push({
+        from: a.nodes.find((n) => n.id === e.from)?.label ?? e.from,
+        to: a.nodes.find((n) => n.id === e.to)?.label ?? e.to,
+        label: e.label,
+      });
+  });
+
+  return { addedNodes, removedNodes, keptNodes, addedEdges, removedEdges };
+}
+
+export function exportTemplatesJson(): string {
+  return JSON.stringify({ kind: "flowchart-templates", version: 1, items: loadTemplates() }, null, 2);
+}
+
+export function importTemplatesJson(raw: string, mode: "merge" | "replace"): PromptTemplate[] {
+  const parsed = JSON.parse(raw);
+  const items: PromptTemplate[] = Array.isArray(parsed)
+    ? parsed
+    : Array.isArray(parsed.items)
+    ? parsed.items
+    : [];
+  const cleaned: PromptTemplate[] = items
+    .filter((t) => t && typeof t.name === "string" && typeof t.description === "string")
+    .map((t) => ({
+      id: typeof t.id === "string" ? t.id : "tpl-" + Math.random().toString(36).slice(2, 9),
+      name: t.name,
+      description: t.description,
+      createdAt: typeof t.createdAt === "number" ? t.createdAt : Date.now(),
+    }));
+  const next =
+    mode === "replace"
+      ? cleaned
+      : (() => {
+          const existing = loadTemplates();
+          const seen = new Set(existing.map((t) => t.name + "::" + t.description));
+          const merged = [...existing];
+          cleaned.forEach((t) => {
+            const k = t.name + "::" + t.description;
+            if (!seen.has(k)) {
+              merged.unshift(t);
+              seen.add(k);
+            }
+          });
+          return merged;
+        })();
+  saveTemplates(next);
+  return next;
 }
