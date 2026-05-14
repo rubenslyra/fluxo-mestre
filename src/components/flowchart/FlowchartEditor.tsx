@@ -172,8 +172,9 @@ export function FlowchartEditor() {
     setSelected(node.id);
   };
 
+  // updates that happen continuously (drag, typing) — bypass history; caller commits once at the start
   const updateNode = (id: string, patch: Partial<FlowNode>) =>
-    setDoc((d) => ({ ...d, nodes: d.nodes.map((n) => (n.id === id ? { ...n, ...patch } : n)) }));
+    setDocRaw((d) => ({ ...d, nodes: d.nodes.map((n) => (n.id === id ? { ...n, ...patch } : n)) }));
 
   const deleteSelected = () => {
     if (!selected) return;
@@ -188,6 +189,7 @@ export function FlowchartEditor() {
     e.stopPropagation();
     setSelected(node.id);
     const w = screenToWorld(e.clientX, e.clientY);
+    commit(); // snapshot before drag
     dragRef.current = { id: node.id, offX: w.x - node.x, offY: w.y - node.y };
   };
 
