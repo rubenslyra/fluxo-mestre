@@ -208,6 +208,41 @@ export function CriticalThinkingLab() {
     persistObj(next);
   };
 
+  // ---------- Export / Import overrides ----------
+  const exportOverrides = () => {
+    if (Object.keys(objOverrides).length === 0) {
+      alert("Você ainda não tem objeções customizadas para exportar.");
+      return;
+    }
+    downloadJSON("fluxolab-objecoes.json", { version: 1, exportedAt: new Date().toISOString(), overrides: objOverrides });
+  };
+  const importOverrides = (file: File) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        const parsed = JSON.parse(String(reader.result));
+        const incoming: ObjectionOverrides = parsed.overrides ?? parsed;
+        // validação superficial
+        for (const k of Object.keys(incoming)) {
+          if (!Array.isArray(incoming[k])) throw new Error("Formato inválido em " + k);
+          for (const o of incoming[k]) {
+            if (typeof o.question !== "string" || typeof o.answer !== "string") {
+              throw new Error("Objeções devem ter 'question' e 'answer' como strings.");
+            }
+          }
+        }
+        const merge = confirm(
+          "Mesclar com suas objeções atuais? OK = mesclar (sobrescreve por desafio). Cancelar = SUBSTITUIR tudo.",
+        );
+        persistObj(merge ? { ...objOverrides, ...incoming } : incoming);
+        alert("Importação concluída.");
+      } catch (e) {
+        alert("Falha ao importar: " + (e instanceof Error ? e.message : String(e)));
+      }
+    };
+    reader.readAsText(file);
+  };
+
   return (
     <div className="flex h-full w-full overflow-hidden bg-background">
       {/* Sidebar */}
