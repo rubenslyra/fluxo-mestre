@@ -41,18 +41,78 @@ function uid() {
   return Math.random().toString(36).slice(2, 9);
 }
 
+const EXPORT_PREFS_KEY = "flowchart-export-prefs-v1";
+type ExportFormat = "png" | "svg";
+function loadExportPrefs(): { format: ExportFormat; scale: number } {
+  if (typeof window === "undefined") return { format: "png", scale: 2 };
+  try {
+    const raw = localStorage.getItem(EXPORT_PREFS_KEY);
+    if (raw) {
+      const p = JSON.parse(raw);
+      const scale = Math.max(1, Math.min(4, Number(p.scale) || 2));
+      const format: ExportFormat = p.format === "svg" ? "svg" : "png";
+      return { format, scale };
+    }
+  } catch {}
+  return { format: "png", scale: 2 };
+}
+
 export function FlowchartEditor() {
-  const [doc, setDoc] = useState<FlowDoc>(() => loadDoc());
+  const [doc, setDocRaw] = useState<FlowDoc>(() => loadDoc());
+  const [past, setPast] = useState<FlowDoc[]>([]);
+  const [future, setFuture] = useState<FlowDoc[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
   const [view, setView] = useState({ x: 0, y: 0, k: 1 });
   const [pendingEdge, setPendingEdge] = useState<{ from: string; x: number; y: number } | null>(null);
   const [aiOpen, setAiOpen] = useState(false);
   const [search, setSearch] = useState("");
   const [exportMenu, setExportMenu] = useState(false);
-  const [exportScale, setExportScale] = useState(2);
+  const initialPrefs = loadExportPrefs();
+  const [exportScale, setExportScale] = useState(initialPrefs.scale);
+  const [exportFormat, setExportFormat] = useState<ExportFormat>(initialPrefs.format);
+  useEffect(() => {
+    try {
+      localStorage.setItem(EXPORT_PREFS_KEY, JSON.stringify({ format: exportFormat, scale: exportScale }));
+    } catch {}
+  }, [exportFormat, exportScale]);
   const svgRef = useRef<SVGSVGElement>(null);
   const dragRef = useRef<{ id: string; offX: number; offY: number } | null>(null);
   const panRef = useRef<{ x: number; y: number; vx: number; vy: number } | null>(null);
+  const docRef = useRef(doc);
+  docRef.current = doc;
+
+  // Snapshot current doc into the undo stack and clear redo
+  const commit = useCallback(() => {
+    setPast((p) => [...p.slice(-49), JSON.parse(JSON.stringify(docRef.current)) as FlowDoc]);
+    setFuture([]);
+  }, []);
+
+  // setDoc that also commits the previous state to history
+  type DocUpdater = FlowDoc | ((d: FlowDoc) => FlowDoc);
+  const setDoc = useCallback((updater: DocUpdater) => {
+    commit();
+    setDocRaw((d) => (typeof updater === "function" ? (updater as (d: FlowDoc) => FlowDoc)(d) : updater));
+  }, [commit]);
+
+  const undo = useCallback(() => {
+    setPast((p) => {
+      if (p.length === 0) return p;
+      const prev = p[p.length - 1];
+      setFuture((f) => [JSON.parse(JSON.stringify(docRef.current)) as FlowDoc, ...f].slice(0, 50));
+      setDocRaw(prev);
+      return p.slice(0, -1);
+    });
+  }, []);
+
+  const redo = useCallback(() => {
+    setFuture((f) => {
+      if (f.length === 0) return f;
+      const next = f[0];
+      setPast((p) => [...p.slice(-49), JSON.parse(JSON.stringify(docRef.current)) as FlowDoc]);
+      setDocRaw(next);
+      return f.slice(1);
+    });
+  }, []);
 
   const matchedIds = useMemo(() => {
     const q = search.trim().toLowerCase();
