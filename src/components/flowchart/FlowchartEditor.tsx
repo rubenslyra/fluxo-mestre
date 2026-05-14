@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { SYMBOLS, type SymbolKind } from "./symbols";
 import { SymbolPreview, NodeShape } from "./NodeShape";
 import { edgePath } from "./geometry";
-import type { FlowDoc, FlowEdge, FlowNode } from "./types";
+import type { FlowDoc, FlowNode } from "./types";
 import { AiGeneratorPanel } from "./AiGeneratorPanel";
 
 const STORAGE_KEY = "flowchart-doc-v1";
