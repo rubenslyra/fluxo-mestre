@@ -122,8 +122,29 @@ export function CriticalThinkingLab() {
   const [activeId, setActiveId] = useState<string>(CHALLENGES[0].id);
   const [filter, setFilter] = useState<"todos" | Difficulty>("todos");
   const [tagFilter, setTagFilter] = useState<"todos" | ObjectionTag>("todos");
+  const [search, setSearch] = useState("");
   const [editingObj, setEditingObj] = useState(false);
   const [debateObjIdx, setDebateObjIdx] = useState<number | null>(null);
+  const [printOpts, setPrintOpts] = useState<PrintOptions>({ paper: "A4", margin: "normal", separateSections: true });
+  const [showPrintMenu, setShowPrintMenu] = useState(false);
+
+  // Live debate (one step at a time)
+  const [liveStep, setLiveStep] = useState(0);
+  const [timerOn, setTimerOn] = useState(false);
+  const [seconds, setSeconds] = useState(0);
+  const importRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (!timerOn) return;
+    const t = setInterval(() => setSeconds((s) => s + 1), 1000);
+    return () => clearInterval(t);
+  }, [timerOn]);
+
+  useEffect(() => {
+    setLiveStep(0);
+    setSeconds(0);
+    setTimerOn(false);
+  }, [debateObjIdx, activeId]);
 
   const persistProg = (next: Progress) => {
     setProgress(next);
