@@ -4,6 +4,8 @@ import { SymbolPreview, NodeShape } from "./NodeShape";
 import { edgePath } from "./geometry";
 import type { FlowDoc, FlowNode } from "./types";
 import { AiGeneratorPanel } from "./AiGeneratorPanel";
+import { validateFlow } from "./validation";
+import { downloadPng, downloadSvg } from "./exportImage";
 
 const STORAGE_KEY = "flowchart-doc-v1";
 
