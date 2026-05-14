@@ -206,28 +206,16 @@ export function FlowchartEditor() {
     if (v !== null) updateNode(node.id, { label: v });
   };
 
+  const getInner = () => svgRef.current?.querySelector("#world")?.innerHTML ?? "";
+
   const exportSVG = () => {
-    const svg = svgRef.current;
-    if (!svg) return;
-    const xs = doc.nodes.map((n) => n.x - n.w / 2);
-    const ys = doc.nodes.map((n) => n.y - n.h / 2);
-    const xe = doc.nodes.map((n) => n.x + n.w / 2);
-    const ye = doc.nodes.map((n) => n.y + n.h / 2);
-    const minX = Math.min(...xs) - 40;
-    const minY = Math.min(...ys) - 40;
-    const maxX = Math.max(...xe) + 40;
-    const maxY = Math.max(...ye) + 40;
-    const w = maxX - minX;
-    const h = maxY - minY;
-    const inner = svg.querySelector("#world")?.innerHTML ?? "";
-    const styled = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${minX} ${minY} ${w} ${h}" width="${w}" height="${h}"><style>text{font-family:system-ui,sans-serif}</style><rect x="${minX}" y="${minY}" width="${w}" height="${h}" fill="white"/>${inner.replace(/var\(--color-node\)/g, "white").replace(/var\(--color-node-stroke\)/g, "#222").replace(/var\(--color-node-selected\)/g, "#222").replace(/var\(--color-edge\)/g, "#222").replace(/var\(--color-foreground\)/g, "#111").replace(/var\(--color-accent\)/g, "white")}</svg>`;
-    const blob = new Blob([styled], { type: "image/svg+xml" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = "fluxograma.svg";
-    a.click();
-    URL.revokeObjectURL(url);
+    if (doc.nodes.length === 0) return;
+    downloadSvg(doc, getInner());
+  };
+
+  const exportPNG = async (scale: number) => {
+    if (doc.nodes.length === 0) return;
+    await downloadPng(doc, getInner(), scale);
   };
 
   const exportJSON = () => {
