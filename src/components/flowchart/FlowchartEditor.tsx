@@ -44,9 +44,33 @@ export function FlowchartEditor() {
   const [selected, setSelected] = useState<string | null>(null);
   const [view, setView] = useState({ x: 0, y: 0, k: 1 });
   const [pendingEdge, setPendingEdge] = useState<{ from: string; x: number; y: number } | null>(null);
+  const [aiOpen, setAiOpen] = useState(false);
+  const [search, setSearch] = useState("");
   const svgRef = useRef<SVGSVGElement>(null);
   const dragRef = useRef<{ id: string; offX: number; offY: number } | null>(null);
   const panRef = useRef<{ x: number; y: number; vx: number; vy: number } | null>(null);
+
+  const matchedIds = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return null;
+    return new Set(doc.nodes.filter((n) => n.label.toLowerCase().includes(q)).map((n) => n.id));
+  }, [search, doc.nodes]);
+
+  const applyAiDoc = (incoming: FlowDoc, mode: "replace" | "merge") => {
+    if (mode === "replace") {
+      setDoc(incoming);
+      return;
+    }
+    // merge: prefixar ids para evitar colisão
+    const prefix = "ai_" + Math.random().toString(36).slice(2, 6) + "_";
+    const remap = new Map<string, string>();
+    incoming.nodes.forEach((n) => remap.set(n.id, prefix + n.id));
+    const offsetX = 0;
+    const offsetY = (Math.max(0, ...doc.nodes.map((n) => n.y + n.h / 2)) || 0) + 80;
+    const newNodes = incoming.nodes.map((n) => ({ ...n, id: remap.get(n.id)!, x: n.x + offsetX, y: n.y + offsetY }));
+    const newEdges = incoming.edges.map((e) => ({ ...e, id: prefix + e.id, from: remap.get(e.from)!, to: remap.get(e.to)! }));
+    setDoc((d) => ({ nodes: [...d.nodes, ...newNodes], edges: [...d.edges, ...newEdges] }));
+  };
 
   useEffect(() => {
     try {
