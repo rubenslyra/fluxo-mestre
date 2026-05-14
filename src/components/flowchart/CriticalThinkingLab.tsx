@@ -255,6 +255,37 @@ export function CriticalThinkingLab() {
             {totalDone} de {CHALLENGES.length} concluídos · {filtered.length} no filtro
           </p>
 
+          <input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Buscar por título, objeção ou tag…"
+            className="mt-3 w-full rounded-md border border-input bg-background px-2 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-ring"
+          />
+
+          <div className="mt-3 flex gap-1">
+            <button
+              onClick={exportOverrides}
+              className="flex-1 rounded-md border border-border bg-background px-2 py-1 text-[11px] hover:bg-muted"
+              title="Baixar suas objeções customizadas em JSON"
+            >
+              ⬇ Exportar objeções
+            </button>
+            <button
+              onClick={() => importRef.current?.click()}
+              className="flex-1 rounded-md border border-border bg-background px-2 py-1 text-[11px] hover:bg-muted"
+              title="Importar objeções de outra turma (JSON)"
+            >
+              ⬆ Importar
+            </button>
+            <input
+              ref={importRef}
+              type="file"
+              accept="application/json"
+              className="hidden"
+              onChange={(e) => e.target.files?.[0] && importOverrides(e.target.files[0])}
+            />
+          </div>
+
           <div className="mt-3">
             <p className="mb-1 text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Dificuldade</p>
             <div className="flex flex-wrap gap-1">
