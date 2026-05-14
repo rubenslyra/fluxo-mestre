@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { SYMBOLS, type SymbolKind } from "./symbols";
 import { SymbolPreview, NodeShape } from "./NodeShape";
 import { edgePath } from "./geometry";
-import type { FlowDoc, FlowEdge, FlowNode } from "./types";
+import type { FlowDoc, FlowNode } from "./types";
+import { AiGeneratorPanel } from "./AiGeneratorPanel";
 
 const STORAGE_KEY = "flowchart-doc-v1";
 
@@ -43,9 +44,33 @@ export function FlowchartEditor() {
   const [selected, setSelected] = useState<string | null>(null);
   const [view, setView] = useState({ x: 0, y: 0, k: 1 });
   const [pendingEdge, setPendingEdge] = useState<{ from: string; x: number; y: number } | null>(null);
+  const [aiOpen, setAiOpen] = useState(false);
+  const [search, setSearch] = useState("");
   const svgRef = useRef<SVGSVGElement>(null);
   const dragRef = useRef<{ id: string; offX: number; offY: number } | null>(null);
   const panRef = useRef<{ x: number; y: number; vx: number; vy: number } | null>(null);
+
+  const matchedIds = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return null;
+    return new Set(doc.nodes.filter((n) => n.label.toLowerCase().includes(q)).map((n) => n.id));
+  }, [search, doc.nodes]);
+
+  const applyAiDoc = (incoming: FlowDoc, mode: "replace" | "merge") => {
+    if (mode === "replace") {
+      setDoc(incoming);
+      return;
+    }
+    // merge: prefixar ids para evitar colisão
+    const prefix = "ai_" + Math.random().toString(36).slice(2, 6) + "_";
+    const remap = new Map<string, string>();
+    incoming.nodes.forEach((n) => remap.set(n.id, prefix + n.id));
+    const offsetX = 0;
+    const offsetY = (Math.max(0, ...doc.nodes.map((n) => n.y + n.h / 2)) || 0) + 80;
+    const newNodes = incoming.nodes.map((n) => ({ ...n, id: remap.get(n.id)!, x: n.x + offsetX, y: n.y + offsetY }));
+    const newEdges = incoming.edges.map((e) => ({ ...e, id: prefix + e.id, from: remap.get(e.from)!, to: remap.get(e.to)! }));
+    setDoc((d) => ({ nodes: [...d.nodes, ...newNodes], edges: [...d.edges, ...newEdges] }));
+  };
 
   useEffect(() => {
     try {
@@ -279,6 +304,13 @@ export function FlowchartEditor() {
           </span>
         </div>
         <div className="flex items-center gap-2">
+          <button
+            onClick={() => setAiOpen(true)}
+            className="rounded-md bg-gradient-to-r from-violet-600 to-fuchsia-600 px-3 py-1.5 text-sm font-medium text-white hover:opacity-90"
+            title="Gerar fluxograma a partir de descrição com IA"
+          >
+            🤖 Gerar com IA
+          </button>
           <button onClick={loadExample} className="rounded-md border border-border px-3 py-1.5 text-sm hover:bg-muted">
             Exemplo
           </button>
@@ -303,10 +335,28 @@ export function FlowchartEditor() {
         </div>
       </header>
 
+      <AiGeneratorPanel open={aiOpen} onClose={() => setAiOpen(false)} onApply={applyAiDoc} />
+
       <div className="flex flex-1 overflow-hidden">
         {/* Sidebar */}
         <aside className="w-64 shrink-0 overflow-y-auto border-r border-border bg-card p-4">
-          <h2 className="mb-3 text-xs font-bold uppercase tracking-widest text-muted-foreground">
+          <h2 className="mb-2 text-xs font-bold uppercase tracking-widest text-muted-foreground">
+            Buscar no fluxo
+          </h2>
+          <input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Filtrar por texto do símbolo…"
+            className="mb-1 w-full rounded-md border border-input bg-background px-2 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-ring"
+          />
+          {search && (
+            <p className="mb-3 text-[11px] text-muted-foreground">
+              {matchedIds?.size ?? 0} símbolo{(matchedIds?.size ?? 0) === 1 ? "" : "s"} encontrado
+              {(matchedIds?.size ?? 0) === 1 ? "" : "s"}
+            </p>
+          )}
+
+          <h2 className="mb-3 mt-2 text-xs font-bold uppercase tracking-widest text-muted-foreground">
             Símbolos ISO 5807
           </h2>
           <div className="grid grid-cols-2 gap-2">
@@ -435,17 +485,21 @@ export function FlowchartEditor() {
               })()}
 
               {/* nodes */}
-              {doc.nodes.map((n) => (
-                <NodeShape
-                  key={n.id}
-                  node={n}
-                  selected={selected === n.id}
-                  onMouseDown={(e) => handleNodeMouseDown(n, e)}
-                  onDoubleClick={() => promptLabel(n)}
-                  onPortMouseDown={(_, e) => startEdge(n.id, e)}
-                  onPortMouseUp={() => finishEdgeOn(n.id)}
-                />
-              ))}
+              {doc.nodes.map((n) => {
+                const dim = matchedIds && !matchedIds.has(n.id);
+                return (
+                  <g key={n.id} style={{ opacity: dim ? 0.25 : 1, transition: "opacity .15s" }}>
+                    <NodeShape
+                      node={n}
+                      selected={selected === n.id || (matchedIds?.has(n.id) ?? false)}
+                      onMouseDown={(e) => handleNodeMouseDown(n, e)}
+                      onDoubleClick={() => promptLabel(n)}
+                      onPortMouseDown={(_, e) => startEdge(n.id, e)}
+                      onPortMouseUp={() => finishEdgeOn(n.id)}
+                    />
+                  </g>
+                );
+              })}
             </g>
           </svg>
 
