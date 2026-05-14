@@ -7,6 +7,8 @@ import {
   addTemplate,
   clearHistory,
   diffFlows,
+  exportTemplatesJson,
+  importTemplatesJson,
   loadHistory,
   loadTemplates,
   pushHistory,
