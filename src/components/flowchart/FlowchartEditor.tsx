@@ -48,6 +48,8 @@ export function FlowchartEditor() {
   const [pendingEdge, setPendingEdge] = useState<{ from: string; x: number; y: number } | null>(null);
   const [aiOpen, setAiOpen] = useState(false);
   const [search, setSearch] = useState("");
+  const [exportMenu, setExportMenu] = useState(false);
+  const [exportScale, setExportScale] = useState(2);
   const svgRef = useRef<SVGSVGElement>(null);
   const dragRef = useRef<{ id: string; offX: number; offY: number } | null>(null);
   const panRef = useRef<{ x: number; y: number; vx: number; vy: number } | null>(null);
