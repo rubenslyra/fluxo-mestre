@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { CHALLENGES, type Challenge, type Difficulty, type StudentObjection } from "./challenges";
 import {
   classifyObjection,
@@ -38,25 +38,41 @@ function escapeHtml(s: string) {
   return s.replace(/[&<>"']/g, (m) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[m]!));
 }
 
-function exportPrintable(c: Challenge, objections: StudentObjection[]) {
+type PrintOptions = {
+  paper: "A4" | "Letter";
+  margin: "estreita" | "normal" | "larga";
+  separateSections: boolean;
+};
+
+const MARGIN_CSS: Record<PrintOptions["margin"], string> = {
+  estreita: "12mm",
+  normal: "20mm",
+  larga: "30mm",
+};
+
+function exportPrintable(c: Challenge, objections: StudentObjection[], opts: PrintOptions) {
+  const pageBreakObj = opts.separateSections ? "page-break-before:always;" : "page-break-inside:avoid;";
   const html = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"/>
 <title>${escapeHtml(c.title)} — Material de aula</title>
 <style>
-  body{font-family:Georgia,serif;max-width:780px;margin:24px auto;padding:0 24px;color:#111;line-height:1.55}
+  @page { size: ${opts.paper}; margin: ${MARGIN_CSS[opts.margin]}; }
+  body{font-family:Georgia,serif;color:#111;line-height:1.55}
   h1{font-size:26px;margin-bottom:4px}
   h2{font-size:16px;text-transform:uppercase;letter-spacing:.08em;color:#444;margin-top:28px;border-bottom:1px solid #ccc;padding-bottom:4px}
   .meta{color:#666;font-size:13px;margin-bottom:18px}
   .box{background:#f6f6f6;border-left:4px solid #2563eb;padding:12px 16px;margin:12px 0}
   ul{padding-left:20px}
   li{margin:4px 0}
-  .obj{border:1px solid #ddd;border-radius:6px;padding:10px 14px;margin:10px 0;page-break-inside:avoid}
-  .obj .q{font-weight:bold}
-  .obj .a{margin-top:6px;color:#222}
+  .obj{border:1px solid #ddd;border-radius:6px;padding:14px 18px;margin:12px 0;${pageBreakObj}}
+  .obj h3{margin:0 0 6px;font-size:14px;color:#2563eb;text-transform:uppercase;letter-spacing:.06em}
+  .obj .q{font-weight:bold;font-size:15px}
+  .obj .a{margin-top:8px;color:#222}
+  .tag{display:inline-block;background:#eef2ff;color:#3730a3;font-size:11px;padding:2px 8px;border-radius:10px;margin-right:6px;text-transform:uppercase;letter-spacing:.05em}
   footer{margin-top:40px;color:#888;font-size:11px;text-align:center;border-top:1px solid #eee;padding-top:8px}
-  @media print{body{margin:0}}
+  .page-break{page-break-before:always}
 </style></head><body>
 <h1>${escapeHtml(c.title)}</h1>
-<div class="meta">${escapeHtml(c.category)} · ${escapeHtml(c.difficulty)} · Conceito: ${escapeHtml(c.logicConcept)}</div>
+<div class="meta">${escapeHtml(c.category)} · ${escapeHtml(c.difficulty)} · Conceito: ${escapeHtml(c.logicConcept)} · Papel ${opts.paper}</div>
 
 <h2>Cenário</h2>
 <p>${escapeHtml(c.scenario)}</p>
@@ -70,9 +86,10 @@ function exportPrintable(c: Challenge, objections: StudentObjection[]) {
 
 <h2>Respostas prontas para objeções dos alunos</h2>
 ${objections
-  .map(
-    (o) => `<div class="obj"><div class="q">💬 ${escapeHtml(o.question)}</div><div class="a">${escapeHtml(o.answer)}</div></div>`,
-  )
+  .map((o, i) => {
+    const tag = TAG_LABEL[classifyObjection(o.question)];
+    return `<div class="obj"><h3>Objeção ${i + 1}</h3><span class="tag">${escapeHtml(tag)}</span><div class="q">💬 ${escapeHtml(o.question)}</div><div class="a">${escapeHtml(o.answer)}</div></div>`;
+  })
   .join("")}
 
 <footer>FluxoLab · Material de apoio para aula · Imprima ou salve como PDF (Ctrl/Cmd+P)</footer>
@@ -89,14 +106,45 @@ ${objections
   w.document.close();
 }
 
+function downloadJSON(filename: string, payload: unknown) {
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
 export function CriticalThinkingLab() {
   const [progress, setProgress] = useState<Progress>(() => loadJSON(STORAGE_KEY, {}));
   const [objOverrides, setObjOverrides] = useState<ObjectionOverrides>(() => loadJSON(OBJ_OVERRIDE_KEY, {}));
   const [activeId, setActiveId] = useState<string>(CHALLENGES[0].id);
   const [filter, setFilter] = useState<"todos" | Difficulty>("todos");
   const [tagFilter, setTagFilter] = useState<"todos" | ObjectionTag>("todos");
+  const [search, setSearch] = useState("");
   const [editingObj, setEditingObj] = useState(false);
   const [debateObjIdx, setDebateObjIdx] = useState<number | null>(null);
+  const [printOpts, setPrintOpts] = useState<PrintOptions>({ paper: "A4", margin: "normal", separateSections: true });
+  const [showPrintMenu, setShowPrintMenu] = useState(false);
+
+  // Live debate (one step at a time)
+  const [liveStep, setLiveStep] = useState(0);
+  const [timerOn, setTimerOn] = useState(false);
+  const [seconds, setSeconds] = useState(0);
+  const importRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (!timerOn) return;
+    const t = setInterval(() => setSeconds((s) => s + 1), 1000);
+    return () => clearInterval(t);
+  }, [timerOn]);
+
+  useEffect(() => {
+    setLiveStep(0);
+    setSeconds(0);
+    setTimerOn(false);
+  }, [debateObjIdx, activeId]);
 
   const persistProg = (next: Progress) => {
     setProgress(next);
@@ -113,16 +161,26 @@ export function CriticalThinkingLab() {
   };
 
   const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase();
     return CHALLENGES.filter((c) => {
       if (filter !== "todos" && c.difficulty !== filter) return false;
+      const objs = getEffectiveObjections(c, objOverrides);
       if (tagFilter !== "todos") {
-        const objs = getEffectiveObjections(c, objOverrides);
         const hasTag = objs.some((o) => classifyObjection(o.question) === tagFilter);
         if (!hasTag) return false;
       }
+      if (q) {
+        const tagLabels = objs.map((o) => TAG_LABEL[classifyObjection(o.question)].toLowerCase());
+        const hit =
+          c.title.toLowerCase().includes(q) ||
+          c.scenario.toLowerCase().includes(q) ||
+          objs.some((o) => o.question.toLowerCase().includes(q) || o.answer.toLowerCase().includes(q)) ||
+          tagLabels.some((t) => t.includes(q));
+        if (!hit) return false;
+      }
       return true;
     });
-  }, [filter, tagFilter, objOverrides]);
+  }, [filter, tagFilter, search, objOverrides]);
 
   const active = CHALLENGES.find((c) => c.id === activeId) ?? CHALLENGES[0];
   const prog = getProg(active.id);
@@ -150,6 +208,41 @@ export function CriticalThinkingLab() {
     persistObj(next);
   };
 
+  // ---------- Export / Import overrides ----------
+  const exportOverrides = () => {
+    if (Object.keys(objOverrides).length === 0) {
+      alert("Você ainda não tem objeções customizadas para exportar.");
+      return;
+    }
+    downloadJSON("fluxolab-objecoes.json", { version: 1, exportedAt: new Date().toISOString(), overrides: objOverrides });
+  };
+  const importOverrides = (file: File) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        const parsed = JSON.parse(String(reader.result));
+        const incoming: ObjectionOverrides = parsed.overrides ?? parsed;
+        // validação superficial
+        for (const k of Object.keys(incoming)) {
+          if (!Array.isArray(incoming[k])) throw new Error("Formato inválido em " + k);
+          for (const o of incoming[k]) {
+            if (typeof o.question !== "string" || typeof o.answer !== "string") {
+              throw new Error("Objeções devem ter 'question' e 'answer' como strings.");
+            }
+          }
+        }
+        const merge = confirm(
+          "Mesclar com suas objeções atuais? OK = mesclar (sobrescreve por desafio). Cancelar = SUBSTITUIR tudo.",
+        );
+        persistObj(merge ? { ...objOverrides, ...incoming } : incoming);
+        alert("Importação concluída.");
+      } catch (e) {
+        alert("Falha ao importar: " + (e instanceof Error ? e.message : String(e)));
+      }
+    };
+    reader.readAsText(file);
+  };
+
   return (
     <div className="flex h-full w-full overflow-hidden bg-background">
       {/* Sidebar */}
@@ -161,6 +254,37 @@ export function CriticalThinkingLab() {
           <p className="mt-1 text-xs text-muted-foreground">
             {totalDone} de {CHALLENGES.length} concluídos · {filtered.length} no filtro
           </p>
+
+          <input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Buscar por título, objeção ou tag…"
+            className="mt-3 w-full rounded-md border border-input bg-background px-2 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-ring"
+          />
+
+          <div className="mt-3 flex gap-1">
+            <button
+              onClick={exportOverrides}
+              className="flex-1 rounded-md border border-border bg-background px-2 py-1 text-[11px] hover:bg-muted"
+              title="Baixar suas objeções customizadas em JSON"
+            >
+              ⬇ Exportar objeções
+            </button>
+            <button
+              onClick={() => importRef.current?.click()}
+              className="flex-1 rounded-md border border-border bg-background px-2 py-1 text-[11px] hover:bg-muted"
+              title="Importar objeções de outra turma (JSON)"
+            >
+              ⬆ Importar
+            </button>
+            <input
+              ref={importRef}
+              type="file"
+              accept="application/json"
+              className="hidden"
+              onChange={(e) => e.target.files?.[0] && importOverrides(e.target.files[0])}
+            />
+          </div>
 
           <div className="mt-3">
             <p className="mb-1 text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Dificuldade</p>
@@ -251,13 +375,61 @@ export function CriticalThinkingLab() {
               <h1 className="mt-2 text-3xl font-bold tracking-tight">{active.title}</h1>
               <p className="mt-2 text-sm font-medium text-primary">Conceito lógico: {active.logicConcept}</p>
             </div>
-            <button
-              onClick={() => exportPrintable(active, objections)}
-              className="shrink-0 rounded-md border border-border bg-card px-3 py-2 text-xs font-medium hover:bg-muted"
-              title="Abre uma janela formatada para imprimir ou salvar como PDF"
-            >
-              🖨️ Exportar material da aula (PDF)
-            </button>
+            <div className="relative shrink-0">
+              <button
+                onClick={() => setShowPrintMenu((v) => !v)}
+                className="rounded-md border border-border bg-card px-3 py-2 text-xs font-medium hover:bg-muted"
+                title="Configurar e exportar PDF"
+              >
+                🖨️ Exportar PDF ▾
+              </button>
+              {showPrintMenu && (
+                <div className="absolute right-0 top-full z-20 mt-1 w-72 space-y-3 rounded-lg border border-border bg-card p-4 shadow-xl">
+                  <div>
+                    <p className="mb-1 text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Tamanho do papel</p>
+                    <div className="flex gap-1">
+                      {(["A4", "Letter"] as const).map((p) => (
+                        <button
+                          key={p}
+                          onClick={() => setPrintOpts((o) => ({ ...o, paper: p }))}
+                          className={`flex-1 rounded-md px-2 py-1 text-xs ${printOpts.paper === p ? "bg-primary text-primary-foreground" : "border border-border hover:bg-muted"}`}
+                        >
+                          {p}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <div>
+                    <p className="mb-1 text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Margens</p>
+                    <div className="flex gap-1">
+                      {(["estreita", "normal", "larga"] as const).map((m) => (
+                        <button
+                          key={m}
+                          onClick={() => setPrintOpts((o) => ({ ...o, margin: m }))}
+                          className={`flex-1 rounded-md px-2 py-1 text-xs capitalize ${printOpts.margin === m ? "bg-primary text-primary-foreground" : "border border-border hover:bg-muted"}`}
+                        >
+                          {m}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <label className="flex items-center gap-2 text-xs">
+                    <input
+                      type="checkbox"
+                      checked={printOpts.separateSections}
+                      onChange={(e) => setPrintOpts((o) => ({ ...o, separateSections: e.target.checked }))}
+                    />
+                    Cada objeção em página/seção separada
+                  </label>
+                  <button
+                    onClick={() => { exportPrintable(active, objections, printOpts); setShowPrintMenu(false); }}
+                    className="w-full rounded-md bg-primary px-3 py-2 text-xs font-medium text-primary-foreground hover:opacity-90"
+                  >
+                    Gerar PDF agora
+                  </button>
+                </div>
+              )}
+            </div>
           </header>
 
           {/* Cenário */}
@@ -372,38 +544,87 @@ export function CriticalThinkingLab() {
                       </>
                     )}
 
-                    {isDebating && (
-                      <div className="mt-3 rounded-md border border-primary/40 bg-primary/5 p-3">
-                        <p className="mb-2 text-[11px] font-bold uppercase tracking-wider text-primary">
-                          Roteiro socrático sugerido — categoria: {TAG_LABEL[tag]}
-                        </p>
-                        <ol className="space-y-2">
-                          {SOCRATIC_PLAYBOOK[tag].map((turn, ti) => (
-                            <li key={ti} className="flex gap-2 text-sm">
-                              <span className="mt-0.5 shrink-0 text-xs font-mono text-muted-foreground">{ti + 1}.</span>
-                              <div>
-                                <span
-                                  className={`mr-2 rounded px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider ${
-                                    turn.role === "professor"
-                                      ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-400"
-                                      : turn.role === "pergunta-socratica"
-                                      ? "bg-violet-500/15 text-violet-700 dark:text-violet-400"
-                                      : "bg-amber-500/15 text-amber-700 dark:text-amber-400"
-                                  }`}
+                    {isDebating && (() => {
+                      const playbook = SOCRATIC_PLAYBOOK[tag];
+                      const cur = playbook[Math.min(liveStep, playbook.length - 1)];
+                      const mm = String(Math.floor(seconds / 60)).padStart(2, "0");
+                      const ss = String(seconds % 60).padStart(2, "0");
+                      return (
+                        <div className="mt-3 rounded-md border border-primary/40 bg-primary/5 p-3">
+                          <div className="mb-3 flex items-center justify-between">
+                            <p className="text-[11px] font-bold uppercase tracking-wider text-primary">
+                              Modo ao vivo · etapa {liveStep + 1} de {playbook.length} · {TAG_LABEL[tag]}
+                            </p>
+                            <div className="flex items-center gap-1">
+                              <button
+                                onClick={() => setTimerOn((v) => !v)}
+                                className={`rounded px-2 py-0.5 font-mono text-[11px] ${timerOn ? "bg-rose-500/20 text-rose-700 dark:text-rose-300" : "border border-border hover:bg-muted"}`}
+                                title="Iniciar/pausar cronômetro"
+                              >
+                                {timerOn ? "⏸" : "⏱"} {mm}:{ss}
+                              </button>
+                              <button
+                                onClick={() => { setSeconds(0); setTimerOn(false); }}
+                                className="rounded border border-border px-1.5 py-0.5 text-[11px] hover:bg-muted"
+                                title="Resetar cronômetro"
+                              >↺</button>
+                            </div>
+                          </div>
+
+                          <div className="rounded-md bg-background/70 p-4">
+                            <span
+                              className={`mr-2 rounded px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider ${
+                                cur.role === "professor"
+                                  ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-400"
+                                  : cur.role === "pergunta-socratica"
+                                  ? "bg-violet-500/15 text-violet-700 dark:text-violet-400"
+                                  : "bg-amber-500/15 text-amber-700 dark:text-amber-400"
+                              }`}
+                            >
+                              {cur.role === "professor" ? "professor" : cur.role === "pergunta-socratica" ? "pergunte" : "aluno (esperado)"}
+                            </span>
+                            <p className="mt-2 text-base leading-relaxed">{cur.text}</p>
+                          </div>
+
+                          <div className="mt-3 flex items-center justify-between gap-2">
+                            <button
+                              disabled={liveStep === 0}
+                              onClick={() => setLiveStep((s) => Math.max(0, s - 1))}
+                              className="rounded-md border border-border px-3 py-1 text-xs hover:bg-muted disabled:opacity-40"
+                            >
+                              ← Voltar
+                            </button>
+                            <div className="flex h-1.5 flex-1 overflow-hidden rounded-full bg-muted">
+                              <div className="bg-primary transition-all" style={{ width: `${((liveStep + 1) / playbook.length) * 100}%` }} />
+                            </div>
+                            <button
+                              disabled={liveStep >= playbook.length - 1}
+                              onClick={() => setLiveStep((s) => Math.min(playbook.length - 1, s + 1))}
+                              className="rounded-md bg-primary px-3 py-1 text-xs font-medium text-primary-foreground hover:opacity-90 disabled:opacity-40"
+                            >
+                              Próxima →
+                            </button>
+                          </div>
+
+                          <details className="mt-3">
+                            <summary className="cursor-pointer text-[11px] font-medium text-muted-foreground hover:underline">
+                              Ver roteiro completo (todas as etapas)
+                            </summary>
+                            <ol className="mt-2 space-y-1.5">
+                              {playbook.map((turn, ti) => (
+                                <li
+                                  key={ti}
+                                  className={`flex gap-2 text-xs ${ti === liveStep ? "font-semibold text-foreground" : "text-muted-foreground"}`}
                                 >
-                                  {turn.role === "professor"
-                                    ? "professor"
-                                    : turn.role === "pergunta-socratica"
-                                    ? "pergunte"
-                                    : "aluno (esperado)"}
-                                </span>
-                                <span className="leading-relaxed">{turn.text}</span>
-                              </div>
-                            </li>
-                          ))}
-                        </ol>
-                      </div>
-                    )}
+                                  <span className="font-mono">{ti + 1}.</span>
+                                  <span>{turn.text}</span>
+                                </li>
+                              ))}
+                            </ol>
+                          </details>
+                        </div>
+                      );
+                    })()}
                   </div>
                 );
               })}
