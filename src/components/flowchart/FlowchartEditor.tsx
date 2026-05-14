@@ -340,7 +340,23 @@ export function FlowchartEditor() {
       <div className="flex flex-1 overflow-hidden">
         {/* Sidebar */}
         <aside className="w-64 shrink-0 overflow-y-auto border-r border-border bg-card p-4">
-          <h2 className="mb-3 text-xs font-bold uppercase tracking-widest text-muted-foreground">
+          <h2 className="mb-2 text-xs font-bold uppercase tracking-widest text-muted-foreground">
+            Buscar no fluxo
+          </h2>
+          <input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Filtrar por texto do símbolo…"
+            className="mb-1 w-full rounded-md border border-input bg-background px-2 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-ring"
+          />
+          {search && (
+            <p className="mb-3 text-[11px] text-muted-foreground">
+              {matchedIds?.size ?? 0} símbolo{(matchedIds?.size ?? 0) === 1 ? "" : "s"} encontrado
+              {(matchedIds?.size ?? 0) === 1 ? "" : "s"}
+            </p>
+          )}
+
+          <h2 className="mb-3 mt-2 text-xs font-bold uppercase tracking-widest text-muted-foreground">
             Símbolos ISO 5807
           </h2>
           <div className="grid grid-cols-2 gap-2">
