@@ -4,6 +4,8 @@ import { SymbolPreview, NodeShape } from "./NodeShape";
 import { edgePath } from "./geometry";
 import type { FlowDoc, FlowNode } from "./types";
 import { AiGeneratorPanel } from "./AiGeneratorPanel";
+import { validateFlow } from "./validation";
+import { downloadPng, downloadSvg } from "./exportImage";
 
 const STORAGE_KEY = "flowchart-doc-v1";
 
@@ -46,6 +48,8 @@ export function FlowchartEditor() {
   const [pendingEdge, setPendingEdge] = useState<{ from: string; x: number; y: number } | null>(null);
   const [aiOpen, setAiOpen] = useState(false);
   const [search, setSearch] = useState("");
+  const [exportMenu, setExportMenu] = useState(false);
+  const [exportScale, setExportScale] = useState(2);
   const svgRef = useRef<SVGSVGElement>(null);
   const dragRef = useRef<{ id: string; offX: number; offY: number } | null>(null);
   const panRef = useRef<{ x: number; y: number; vx: number; vy: number } | null>(null);
@@ -202,28 +206,16 @@ export function FlowchartEditor() {
     if (v !== null) updateNode(node.id, { label: v });
   };
 
+  const getInner = () => svgRef.current?.querySelector("#world")?.innerHTML ?? "";
+
   const exportSVG = () => {
-    const svg = svgRef.current;
-    if (!svg) return;
-    const xs = doc.nodes.map((n) => n.x - n.w / 2);
-    const ys = doc.nodes.map((n) => n.y - n.h / 2);
-    const xe = doc.nodes.map((n) => n.x + n.w / 2);
-    const ye = doc.nodes.map((n) => n.y + n.h / 2);
-    const minX = Math.min(...xs) - 40;
-    const minY = Math.min(...ys) - 40;
-    const maxX = Math.max(...xe) + 40;
-    const maxY = Math.max(...ye) + 40;
-    const w = maxX - minX;
-    const h = maxY - minY;
-    const inner = svg.querySelector("#world")?.innerHTML ?? "";
-    const styled = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${minX} ${minY} ${w} ${h}" width="${w}" height="${h}"><style>text{font-family:system-ui,sans-serif}</style><rect x="${minX}" y="${minY}" width="${w}" height="${h}" fill="white"/>${inner.replace(/var\(--color-node\)/g, "white").replace(/var\(--color-node-stroke\)/g, "#222").replace(/var\(--color-node-selected\)/g, "#222").replace(/var\(--color-edge\)/g, "#222").replace(/var\(--color-foreground\)/g, "#111").replace(/var\(--color-accent\)/g, "white")}</svg>`;
-    const blob = new Blob([styled], { type: "image/svg+xml" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = "fluxograma.svg";
-    a.click();
-    URL.revokeObjectURL(url);
+    if (doc.nodes.length === 0) return;
+    downloadSvg(doc, getInner());
+  };
+
+  const exportPNG = async (scale: number) => {
+    if (doc.nodes.length === 0) return;
+    await downloadPng(doc, getInner(), scale);
   };
 
   const exportJSON = () => {
@@ -257,41 +249,7 @@ export function FlowchartEditor() {
 
   const selectedNode = doc.nodes.find((n) => n.id === selected) ?? null;
 
-  // Pedagogical validation
-  const validation = (() => {
-    const issues: { level: "error" | "warning"; msg: string }[] = [];
-    if (doc.nodes.length === 0) return issues;
-    const terms = doc.nodes.filter((n) => n.kind === "terminator");
-    const hasStart = terms.some((n) => /in[ií]cio|start|começar/i.test(n.label));
-    const hasEnd = terms.some((n) => /fim|end|parar/i.test(n.label));
-    if (!hasStart) issues.push({ level: "error", msg: "Falta um símbolo Terminal de Início" });
-    if (!hasEnd) issues.push({ level: "error", msg: "Falta um símbolo Terminal de Fim" });
-
-    const incoming = new Map<string, number>();
-    const outgoing = new Map<string, number>();
-    doc.nodes.forEach((n) => { incoming.set(n.id, 0); outgoing.set(n.id, 0); });
-    doc.edges.forEach((e) => {
-      incoming.set(e.to, (incoming.get(e.to) ?? 0) + 1);
-      outgoing.set(e.from, (outgoing.get(e.from) ?? 0) + 1);
-    });
-    doc.nodes.forEach((n) => {
-      const inc = incoming.get(n.id) ?? 0;
-      const out = outgoing.get(n.id) ?? 0;
-      const isStart = n.kind === "terminator" && /in[ií]cio|start/i.test(n.label);
-      const isEnd = n.kind === "terminator" && /fim|end/i.test(n.label);
-      if (inc === 0 && out === 0) {
-        issues.push({ level: "warning", msg: `"${n.label}" está desconectado` });
-      } else if (!isStart && inc === 0) {
-        issues.push({ level: "warning", msg: `"${n.label}" não tem entrada` });
-      } else if (!isEnd && out === 0) {
-        issues.push({ level: "warning", msg: `"${n.label}" não tem saída` });
-      }
-      if (n.kind === "decision" && out < 2) {
-        issues.push({ level: "warning", msg: `Decisão "${n.label}" deveria ter 2 saídas (Sim/Não)` });
-      }
-    });
-    return issues;
-  })();
+  const validation = validateFlow(doc);
 
   return (
     <div className="flex h-screen w-full flex-col bg-background">
@@ -326,12 +284,57 @@ export function FlowchartEditor() {
           <button onClick={exportJSON} className="rounded-md border border-border px-3 py-1.5 text-sm hover:bg-muted">
             Exportar JSON
           </button>
-          <button
-            onClick={exportSVG}
-            className="rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground hover:opacity-90"
-          >
-            Exportar SVG
-          </button>
+          <div className="relative">
+            <button
+              onClick={() => setExportMenu((v) => !v)}
+              className="rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground hover:opacity-90"
+            >
+              Exportar imagem ▾
+            </button>
+            {exportMenu && (
+              <div className="absolute right-0 top-full z-50 mt-1 w-64 rounded-md border border-border bg-card p-3 text-sm shadow-xl">
+                <p className="mb-2 text-[11px] font-bold uppercase tracking-widest text-muted-foreground">
+                  Escala (PNG)
+                </p>
+                <div className="mb-3 flex gap-1">
+                  {[1, 2, 3, 4].map((s) => (
+                    <button
+                      key={s}
+                      onClick={() => setExportScale(s)}
+                      className={`flex-1 rounded border px-2 py-1 text-xs ${
+                        exportScale === s
+                          ? "border-primary bg-primary/10 font-semibold text-primary"
+                          : "border-border hover:bg-muted"
+                      }`}
+                    >
+                      {s}x
+                    </button>
+                  ))}
+                </div>
+                <button
+                  onClick={() => {
+                    setExportMenu(false);
+                    void exportPNG(exportScale);
+                  }}
+                  className="mb-1 w-full rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground hover:opacity-90"
+                >
+                  Baixar PNG ({exportScale}x)
+                </button>
+                <button
+                  onClick={() => {
+                    setExportMenu(false);
+                    exportSVG();
+                  }}
+                  className="w-full rounded-md border border-border px-3 py-1.5 text-xs hover:bg-muted"
+                >
+                  Baixar SVG (vetorial)
+                </button>
+                <p className="mt-2 text-[10px] text-muted-foreground">
+                  PNG ideal para apresentações/impressão. SVG mantém qualidade infinita.
+                </p>
+              </div>
+            )}
+          </div>
         </div>
       </header>
 
