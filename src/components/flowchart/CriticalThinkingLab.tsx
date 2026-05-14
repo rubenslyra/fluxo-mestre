@@ -544,38 +544,87 @@ export function CriticalThinkingLab() {
                       </>
                     )}
 
-                    {isDebating && (
-                      <div className="mt-3 rounded-md border border-primary/40 bg-primary/5 p-3">
-                        <p className="mb-2 text-[11px] font-bold uppercase tracking-wider text-primary">
-                          Roteiro socrático sugerido — categoria: {TAG_LABEL[tag]}
-                        </p>
-                        <ol className="space-y-2">
-                          {SOCRATIC_PLAYBOOK[tag].map((turn, ti) => (
-                            <li key={ti} className="flex gap-2 text-sm">
-                              <span className="mt-0.5 shrink-0 text-xs font-mono text-muted-foreground">{ti + 1}.</span>
-                              <div>
-                                <span
-                                  className={`mr-2 rounded px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider ${
-                                    turn.role === "professor"
-                                      ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-400"
-                                      : turn.role === "pergunta-socratica"
-                                      ? "bg-violet-500/15 text-violet-700 dark:text-violet-400"
-                                      : "bg-amber-500/15 text-amber-700 dark:text-amber-400"
-                                  }`}
+                    {isDebating && (() => {
+                      const playbook = SOCRATIC_PLAYBOOK[tag];
+                      const cur = playbook[Math.min(liveStep, playbook.length - 1)];
+                      const mm = String(Math.floor(seconds / 60)).padStart(2, "0");
+                      const ss = String(seconds % 60).padStart(2, "0");
+                      return (
+                        <div className="mt-3 rounded-md border border-primary/40 bg-primary/5 p-3">
+                          <div className="mb-3 flex items-center justify-between">
+                            <p className="text-[11px] font-bold uppercase tracking-wider text-primary">
+                              Modo ao vivo · etapa {liveStep + 1} de {playbook.length} · {TAG_LABEL[tag]}
+                            </p>
+                            <div className="flex items-center gap-1">
+                              <button
+                                onClick={() => setTimerOn((v) => !v)}
+                                className={`rounded px-2 py-0.5 font-mono text-[11px] ${timerOn ? "bg-rose-500/20 text-rose-700 dark:text-rose-300" : "border border-border hover:bg-muted"}`}
+                                title="Iniciar/pausar cronômetro"
+                              >
+                                {timerOn ? "⏸" : "⏱"} {mm}:{ss}
+                              </button>
+                              <button
+                                onClick={() => { setSeconds(0); setTimerOn(false); }}
+                                className="rounded border border-border px-1.5 py-0.5 text-[11px] hover:bg-muted"
+                                title="Resetar cronômetro"
+                              >↺</button>
+                            </div>
+                          </div>
+
+                          <div className="rounded-md bg-background/70 p-4">
+                            <span
+                              className={`mr-2 rounded px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider ${
+                                cur.role === "professor"
+                                  ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-400"
+                                  : cur.role === "pergunta-socratica"
+                                  ? "bg-violet-500/15 text-violet-700 dark:text-violet-400"
+                                  : "bg-amber-500/15 text-amber-700 dark:text-amber-400"
+                              }`}
+                            >
+                              {cur.role === "professor" ? "professor" : cur.role === "pergunta-socratica" ? "pergunte" : "aluno (esperado)"}
+                            </span>
+                            <p className="mt-2 text-base leading-relaxed">{cur.text}</p>
+                          </div>
+
+                          <div className="mt-3 flex items-center justify-between gap-2">
+                            <button
+                              disabled={liveStep === 0}
+                              onClick={() => setLiveStep((s) => Math.max(0, s - 1))}
+                              className="rounded-md border border-border px-3 py-1 text-xs hover:bg-muted disabled:opacity-40"
+                            >
+                              ← Voltar
+                            </button>
+                            <div className="flex h-1.5 flex-1 overflow-hidden rounded-full bg-muted">
+                              <div className="bg-primary transition-all" style={{ width: `${((liveStep + 1) / playbook.length) * 100}%` }} />
+                            </div>
+                            <button
+                              disabled={liveStep >= playbook.length - 1}
+                              onClick={() => setLiveStep((s) => Math.min(playbook.length - 1, s + 1))}
+                              className="rounded-md bg-primary px-3 py-1 text-xs font-medium text-primary-foreground hover:opacity-90 disabled:opacity-40"
+                            >
+                              Próxima →
+                            </button>
+                          </div>
+
+                          <details className="mt-3">
+                            <summary className="cursor-pointer text-[11px] font-medium text-muted-foreground hover:underline">
+                              Ver roteiro completo (todas as etapas)
+                            </summary>
+                            <ol className="mt-2 space-y-1.5">
+                              {playbook.map((turn, ti) => (
+                                <li
+                                  key={ti}
+                                  className={`flex gap-2 text-xs ${ti === liveStep ? "font-semibold text-foreground" : "text-muted-foreground"}`}
                                 >
-                                  {turn.role === "professor"
-                                    ? "professor"
-                                    : turn.role === "pergunta-socratica"
-                                    ? "pergunte"
-                                    : "aluno (esperado)"}
-                                </span>
-                                <span className="leading-relaxed">{turn.text}</span>
-                              </div>
-                            </li>
-                          ))}
-                        </ol>
-                      </div>
-                    )}
+                                  <span className="font-mono">{ti + 1}.</span>
+                                  <span>{turn.text}</span>
+                                </li>
+                              ))}
+                            </ol>
+                          </details>
+                        </div>
+                      );
+                    })()}
                   </div>
                 );
               })}
