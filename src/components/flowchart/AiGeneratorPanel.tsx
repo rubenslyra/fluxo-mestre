@@ -259,9 +259,56 @@ export function AiGeneratorPanel({ open, onClose, onApply }: Props) {
 
           {tab === "templates" && (
             <div className="space-y-2">
-              <p className="text-xs text-muted-foreground">
-                Templates salvos no navegador. Use para repetir enunciados (AOP1/AOP2/AOP3 UVV) sem reescrever.
-              </p>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <p className="text-xs text-muted-foreground">
+                  Templates salvos no navegador. Use para repetir enunciados (AOP1/AOP2/AOP3 UVV) sem reescrever.
+                </p>
+                <div className="flex gap-1">
+                  <button
+                    onClick={() => {
+                      const json = exportTemplatesJson();
+                      const blob = new Blob([json], { type: "application/json" });
+                      const url = URL.createObjectURL(blob);
+                      const aEl = document.createElement("a");
+                      aEl.href = url;
+                      aEl.download = `fluxolab-templates-${new Date().toISOString().slice(0, 10)}.json`;
+                      aEl.click();
+                      URL.revokeObjectURL(url);
+                    }}
+                    className="rounded border border-border px-2 py-1 text-[11px] hover:bg-muted"
+                  >
+                    ⤓ Exportar JSON
+                  </button>
+                  <label className="cursor-pointer rounded border border-border px-2 py-1 text-[11px] hover:bg-muted">
+                    ⤒ Importar JSON
+                    <input
+                      type="file"
+                      accept="application/json"
+                      className="hidden"
+                      onChange={(e) => {
+                        const f = e.target.files?.[0];
+                        if (!f) return;
+                        const reader = new FileReader();
+                        reader.onload = () => {
+                          try {
+                            const mode = confirm(
+                              "OK = Mesclar com seus templates atuais\nCancelar = Substituir tudo",
+                            )
+                              ? "merge"
+                              : "replace";
+                            const next = importTemplatesJson(String(reader.result), mode);
+                            setTemplates(next);
+                          } catch {
+                            alert("Arquivo de templates inválido.");
+                          }
+                        };
+                        reader.readAsText(f);
+                        e.currentTarget.value = "";
+                      }}
+                    />
+                  </label>
+                </div>
+              </div>
               {templates.length === 0 && (
                 <p className="rounded-md border border-dashed border-border p-6 text-center text-sm text-muted-foreground">
                   Nenhum template ainda. Vá em <b>Gerar</b> e clique em <b>Salvar como template</b>.
