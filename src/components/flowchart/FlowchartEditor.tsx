@@ -304,6 +304,13 @@ export function FlowchartEditor() {
           </span>
         </div>
         <div className="flex items-center gap-2">
+          <button
+            onClick={() => setAiOpen(true)}
+            className="rounded-md bg-gradient-to-r from-violet-600 to-fuchsia-600 px-3 py-1.5 text-sm font-medium text-white hover:opacity-90"
+            title="Gerar fluxograma a partir de descrição com IA"
+          >
+            🤖 Gerar com IA
+          </button>
           <button onClick={loadExample} className="rounded-md border border-border px-3 py-1.5 text-sm hover:bg-muted">
             Exemplo
           </button>
@@ -327,6 +334,8 @@ export function FlowchartEditor() {
           </button>
         </div>
       </header>
+
+      <AiGeneratorPanel open={aiOpen} onClose={() => setAiOpen(false)} onApply={applyAiDoc} />
 
       <div className="flex flex-1 overflow-hidden">
         {/* Sidebar */}
