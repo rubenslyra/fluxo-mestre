@@ -603,6 +603,7 @@ export function FlowchartEditor() {
               <label className="mb-1 block text-xs font-medium">Texto</label>
               <textarea
                 value={selectedNode.label}
+                onFocus={() => commit()}
                 onChange={(e) => updateNode(selectedNode.id, { label: e.target.value })}
                 className="w-full resize-none rounded-md border border-input bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
                 rows={3}
