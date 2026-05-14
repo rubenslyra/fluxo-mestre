@@ -284,12 +284,57 @@ export function FlowchartEditor() {
           <button onClick={exportJSON} className="rounded-md border border-border px-3 py-1.5 text-sm hover:bg-muted">
             Exportar JSON
           </button>
-          <button
-            onClick={exportSVG}
-            className="rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground hover:opacity-90"
-          >
-            Exportar SVG
-          </button>
+          <div className="relative">
+            <button
+              onClick={() => setExportMenu((v) => !v)}
+              className="rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground hover:opacity-90"
+            >
+              Exportar imagem ▾
+            </button>
+            {exportMenu && (
+              <div className="absolute right-0 top-full z-50 mt-1 w-64 rounded-md border border-border bg-card p-3 text-sm shadow-xl">
+                <p className="mb-2 text-[11px] font-bold uppercase tracking-widest text-muted-foreground">
+                  Escala (PNG)
+                </p>
+                <div className="mb-3 flex gap-1">
+                  {[1, 2, 3, 4].map((s) => (
+                    <button
+                      key={s}
+                      onClick={() => setExportScale(s)}
+                      className={`flex-1 rounded border px-2 py-1 text-xs ${
+                        exportScale === s
+                          ? "border-primary bg-primary/10 font-semibold text-primary"
+                          : "border-border hover:bg-muted"
+                      }`}
+                    >
+                      {s}x
+                    </button>
+                  ))}
+                </div>
+                <button
+                  onClick={() => {
+                    setExportMenu(false);
+                    void exportPNG(exportScale);
+                  }}
+                  className="mb-1 w-full rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground hover:opacity-90"
+                >
+                  Baixar PNG ({exportScale}x)
+                </button>
+                <button
+                  onClick={() => {
+                    setExportMenu(false);
+                    exportSVG();
+                  }}
+                  className="w-full rounded-md border border-border px-3 py-1.5 text-xs hover:bg-muted"
+                >
+                  Baixar SVG (vetorial)
+                </button>
+                <p className="mt-2 text-[10px] text-muted-foreground">
+                  PNG ideal para apresentações/impressão. SVG mantém qualidade infinita.
+                </p>
+              </div>
+            )}
+          </div>
         </div>
       </header>
 
