@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { CHALLENGES, type Challenge, type Difficulty, type StudentObjection } from "./challenges";
 import {
   classifyObjection,
