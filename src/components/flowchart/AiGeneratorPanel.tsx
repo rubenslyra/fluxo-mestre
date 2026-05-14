@@ -7,6 +7,8 @@ import {
   addTemplate,
   clearHistory,
   diffFlows,
+  exportTemplatesJson,
+  importTemplatesJson,
   loadHistory,
   loadTemplates,
   pushHistory,
@@ -257,9 +259,56 @@ export function AiGeneratorPanel({ open, onClose, onApply }: Props) {
 
           {tab === "templates" && (
             <div className="space-y-2">
-              <p className="text-xs text-muted-foreground">
-                Templates salvos no navegador. Use para repetir enunciados (AOP1/AOP2/AOP3 UVV) sem reescrever.
-              </p>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <p className="text-xs text-muted-foreground">
+                  Templates salvos no navegador. Use para repetir enunciados (AOP1/AOP2/AOP3 UVV) sem reescrever.
+                </p>
+                <div className="flex gap-1">
+                  <button
+                    onClick={() => {
+                      const json = exportTemplatesJson();
+                      const blob = new Blob([json], { type: "application/json" });
+                      const url = URL.createObjectURL(blob);
+                      const aEl = document.createElement("a");
+                      aEl.href = url;
+                      aEl.download = `fluxolab-templates-${new Date().toISOString().slice(0, 10)}.json`;
+                      aEl.click();
+                      URL.revokeObjectURL(url);
+                    }}
+                    className="rounded border border-border px-2 py-1 text-[11px] hover:bg-muted"
+                  >
+                    ⤓ Exportar JSON
+                  </button>
+                  <label className="cursor-pointer rounded border border-border px-2 py-1 text-[11px] hover:bg-muted">
+                    ⤒ Importar JSON
+                    <input
+                      type="file"
+                      accept="application/json"
+                      className="hidden"
+                      onChange={(e) => {
+                        const f = e.target.files?.[0];
+                        if (!f) return;
+                        const reader = new FileReader();
+                        reader.onload = () => {
+                          try {
+                            const mode = confirm(
+                              "OK = Mesclar com seus templates atuais\nCancelar = Substituir tudo",
+                            )
+                              ? "merge"
+                              : "replace";
+                            const next = importTemplatesJson(String(reader.result), mode);
+                            setTemplates(next);
+                          } catch {
+                            alert("Arquivo de templates inválido.");
+                          }
+                        };
+                        reader.readAsText(f);
+                        e.currentTarget.value = "";
+                      }}
+                    />
+                  </label>
+                </div>
+              </div>
               {templates.length === 0 && (
                 <p className="rounded-md border border-dashed border-border p-6 text-center text-sm text-muted-foreground">
                   Nenhum template ainda. Vá em <b>Gerar</b> e clique em <b>Salvar como template</b>.
@@ -319,23 +368,107 @@ export function AiGeneratorPanel({ open, onClose, onApply }: Props) {
                 </p>
               )}
 
+              {history.length >= 2 && (
+                <div className="flex flex-wrap items-center gap-2 rounded-md border border-dashed border-border bg-muted/40 p-2 text-[11px]">
+                  <span className="font-semibold">Passo a passo:</span>
+                  <button
+                    onClick={() => {
+                      // Step backward: select previous pair (older A, newer B)
+                      const idxB = compareIds[1] ? history.findIndex((h) => h.id === compareIds[1]) : 0;
+                      const newB = Math.min(history.length - 2, Math.max(0, idxB + 1));
+                      setCompareIds([history[newB + 1].id, history[newB].id]);
+                    }}
+                    className="rounded border border-border px-2 py-0.5 hover:bg-card"
+                  >
+                    ← versão anterior
+                  </button>
+                  <button
+                    onClick={() => {
+                      const idxB = compareIds[1] ? history.findIndex((h) => h.id === compareIds[1]) : 1;
+                      const newB = Math.max(0, idxB - 1);
+                      const aIdx = Math.min(history.length - 1, newB + 1);
+                      setCompareIds([history[aIdx].id, history[newB].id]);
+                    }}
+                    className="rounded border border-border px-2 py-0.5 hover:bg-card"
+                  >
+                    versão seguinte →
+                  </button>
+                  <button
+                    onClick={() => setCompareIds([null, null])}
+                    className="ml-auto text-destructive hover:underline"
+                  >
+                    limpar seleção
+                  </button>
+                </div>
+              )}
+
               {compareDiff && a && b && (
                 <div className="rounded-lg border border-primary/40 bg-primary/5 p-3 text-xs">
-                  <p className="mb-1 font-bold uppercase tracking-widest text-primary">
+                  <p className="mb-2 font-bold uppercase tracking-widest text-primary">
                     Comparação A → B
                   </p>
-                  <p className="text-muted-foreground">
-                    A: {new Date(a.createdAt).toLocaleString()} · {a.flow.nodes.length} símbolos
+                  <div className="mb-2 grid grid-cols-2 gap-2 text-[11px] text-muted-foreground">
+                    <div>
+                      <span className="font-semibold">A</span>
+                      <p>{new Date(a.createdAt).toLocaleString()}</p>
+                      <p>{a.flow.nodes.length} símbolos · {a.flow.edges.length} conexões</p>
+                    </div>
+                    <div>
+                      <span className="font-semibold">B</span>
+                      <p>{new Date(b.createdAt).toLocaleString()}</p>
+                      <p>{b.flow.nodes.length} símbolos · {b.flow.edges.length} conexões</p>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-2">
+                    <div className="rounded border border-emerald-500/40 bg-emerald-500/5 p-2">
+                      <p className="mb-1 text-[10px] font-bold uppercase text-emerald-700 dark:text-emerald-400">
+                        + Adicionados em B ({compareDiff.addedNodes.length + compareDiff.addedEdges.length})
+                      </p>
+                      {compareDiff.addedNodes.length === 0 && compareDiff.addedEdges.length === 0 && (
+                        <p className="text-[11px] text-muted-foreground">nenhum</p>
+                      )}
+                      <ul className="space-y-0.5 text-[11px]">
+                        {compareDiff.addedNodes.map((n, i) => (
+                          <li key={"an" + i} className="truncate">
+                            <span className="text-emerald-700 dark:text-emerald-400">▣</span> {n.label}{" "}
+                            <span className="text-muted-foreground">({n.kind})</span>
+                          </li>
+                        ))}
+                        {compareDiff.addedEdges.map((e, i) => (
+                          <li key={"ae" + i} className="truncate">
+                            <span className="text-emerald-700 dark:text-emerald-400">→</span> {e.from} → {e.to}
+                            {e.label ? <span className="text-muted-foreground"> [{e.label}]</span> : null}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                    <div className="rounded border border-destructive/40 bg-destructive/5 p-2">
+                      <p className="mb-1 text-[10px] font-bold uppercase text-destructive">
+                        − Removidos de A ({compareDiff.removedNodes.length + compareDiff.removedEdges.length})
+                      </p>
+                      {compareDiff.removedNodes.length === 0 && compareDiff.removedEdges.length === 0 && (
+                        <p className="text-[11px] text-muted-foreground">nenhum</p>
+                      )}
+                      <ul className="space-y-0.5 text-[11px]">
+                        {compareDiff.removedNodes.map((n, i) => (
+                          <li key={"rn" + i} className="truncate">
+                            <span className="text-destructive">▣</span> {n.label}{" "}
+                            <span className="text-muted-foreground">({n.kind})</span>
+                          </li>
+                        ))}
+                        {compareDiff.removedEdges.map((e, i) => (
+                          <li key={"re" + i} className="truncate">
+                            <span className="text-destructive">→</span> {e.from} → {e.to}
+                            {e.label ? <span className="text-muted-foreground"> [{e.label}]</span> : null}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  </div>
+                  <p className="mt-2 text-[10px] text-muted-foreground">
+                    {compareDiff.keptNodes.length} símbolo(s) mantidos entre as versões.
                   </p>
-                  <p className="mb-2 text-muted-foreground">
-                    B: {new Date(b.createdAt).toLocaleString()} · {b.flow.nodes.length} símbolos
-                  </p>
-                  <ul className="space-y-0.5">
-                    <li>+ {compareDiff.addedNodes} símbolos novos em B</li>
-                    <li>− {compareDiff.removedNodes} símbolos removidos em B</li>
-                    <li>+ {compareDiff.addedEdges} conexões adicionadas</li>
-                    <li>− {compareDiff.removedEdges} conexões removidas</li>
-                  </ul>
                 </div>
               )}
 
