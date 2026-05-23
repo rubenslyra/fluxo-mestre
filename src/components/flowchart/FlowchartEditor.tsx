@@ -32,13 +32,64 @@ function loadDoc(): FlowDoc {
   if (typeof window === "undefined") return initialDoc;
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    if (raw) return JSON.parse(raw);
+    if (raw) return normalizeDoc(JSON.parse(raw));
   } catch {}
   return initialDoc;
 }
 
 function uid() {
   return Math.random().toString(36).slice(2, 9);
+}
+
+function cloneDoc(doc: FlowDoc): FlowDoc {
+  return {
+    nodes: doc.nodes.map((node) => ({ ...node })),
+    edges: doc.edges.map((edge) => ({ ...edge })),
+  };
+}
+
+function normalizeDoc(value: unknown): FlowDoc {
+  if (!value || typeof value !== "object") return cloneDoc(initialDoc);
+  const maybeDoc = value as Partial<FlowDoc>;
+  if (!Array.isArray(maybeDoc.nodes) || !Array.isArray(maybeDoc.edges)) return cloneDoc(initialDoc);
+
+  const seenNodes = new Set<string>();
+  const nodes: FlowNode[] = maybeDoc.nodes.flatMap((node, index) => {
+    if (!node || typeof node !== "object") return [];
+    const partial = node as Partial<FlowNode>;
+    const kind = partial.kind && partial.kind in SYMBOLS ? partial.kind : "process";
+    const def = SYMBOLS[kind];
+    const id = String(partial.id || `n${index + 1}`);
+    if (seenNodes.has(id)) return [];
+    seenNodes.add(id);
+    return [
+      {
+        id,
+        kind,
+        x: Number.isFinite(partial.x) ? Number(partial.x) : 400,
+        y: Number.isFinite(partial.y) ? Number(partial.y) : 80 + index * 120,
+        w: Number.isFinite(partial.w) && Number(partial.w) > 0 ? Number(partial.w) : def.defaultWidth,
+        h: Number.isFinite(partial.h) && Number(partial.h) > 0 ? Number(partial.h) : def.defaultHeight,
+        label: typeof partial.label === "string" ? partial.label : def.defaultLabel,
+      },
+    ];
+  });
+
+  const nodeIds = new Set(nodes.map((node) => node.id));
+  const seenEdges = new Set<string>();
+  const edges = maybeDoc.edges.flatMap((edge, index) => {
+    if (!edge || typeof edge !== "object") return [];
+    const partial = edge as Partial<FlowDoc["edges"][number]>;
+    const from = typeof partial.from === "string" ? partial.from : "";
+    const to = typeof partial.to === "string" ? partial.to : "";
+    if (!nodeIds.has(from) || !nodeIds.has(to) || from === to) return [];
+    const id = String(partial.id || `e${index + 1}`);
+    if (seenEdges.has(id)) return [];
+    seenEdges.add(id);
+    return [{ id, from, to, label: typeof partial.label === "string" && partial.label ? partial.label : undefined }];
+  });
+
+  return { nodes, edges };
 }
 
 const EXPORT_PREFS_KEY = "flowchart-export-prefs-v1";
@@ -79,11 +130,13 @@ export function FlowchartEditor() {
   const dragRef = useRef<{ id: string; offX: number; offY: number } | null>(null);
   const panRef = useRef<{ x: number; y: number; vx: number; vy: number } | null>(null);
   const docRef = useRef(doc);
+  const viewRef = useRef(view);
   docRef.current = doc;
+  viewRef.current = view;
 
   // Snapshot current doc into the undo stack and clear redo
   const commit = useCallback(() => {
-    setPast((p) => [...p.slice(-49), JSON.parse(JSON.stringify(docRef.current)) as FlowDoc]);
+    setPast((p) => [...p.slice(-49), cloneDoc(docRef.current)]);
     setFuture([]);
   }, []);
 
@@ -97,8 +150,8 @@ export function FlowchartEditor() {
   const undo = useCallback(() => {
     setPast((p) => {
       if (p.length === 0) return p;
-      const prev = p[p.length - 1];
-      setFuture((f) => [JSON.parse(JSON.stringify(docRef.current)) as FlowDoc, ...f].slice(0, 50));
+      const prev = cloneDoc(p[p.length - 1]);
+      setFuture((f) => [cloneDoc(docRef.current), ...f].slice(0, 50));
       setDocRaw(prev);
       return p.slice(0, -1);
     });
@@ -107,8 +160,8 @@ export function FlowchartEditor() {
   const redo = useCallback(() => {
     setFuture((f) => {
       if (f.length === 0) return f;
-      const next = f[0];
-      setPast((p) => [...p.slice(-49), JSON.parse(JSON.stringify(docRef.current)) as FlowDoc]);
+      const next = cloneDoc(f[0]);
+      setPast((p) => [...p.slice(-49), cloneDoc(docRef.current)]);
       setDocRaw(next);
       return f.slice(1);
     });
@@ -122,17 +175,18 @@ export function FlowchartEditor() {
 
   const applyAiDoc = (incoming: FlowDoc, mode: "replace" | "merge") => {
     if (mode === "replace") {
-      setDoc(incoming);
+      setDoc(normalizeDoc(incoming));
       return;
     }
     // merge: prefixar ids para evitar colisão
+    const normalizedIncoming = normalizeDoc(incoming);
     const prefix = "ai_" + Math.random().toString(36).slice(2, 6) + "_";
     const remap = new Map<string, string>();
-    incoming.nodes.forEach((n) => remap.set(n.id, prefix + n.id));
+    normalizedIncoming.nodes.forEach((n) => remap.set(n.id, prefix + n.id));
     const offsetX = 0;
     const offsetY = (Math.max(0, ...doc.nodes.map((n) => n.y + n.h / 2)) || 0) + 80;
-    const newNodes = incoming.nodes.map((n) => ({ ...n, id: remap.get(n.id)!, x: n.x + offsetX, y: n.y + offsetY }));
-    const newEdges = incoming.edges.map((e) => ({ ...e, id: prefix + e.id, from: remap.get(e.from)!, to: remap.get(e.to)! }));
+    const newNodes = normalizedIncoming.nodes.map((n) => ({ ...n, id: remap.get(n.id)!, x: n.x + offsetX, y: n.y + offsetY }));
+    const newEdges = normalizedIncoming.edges.map((e) => ({ ...e, id: prefix + e.id, from: remap.get(e.from)!, to: remap.get(e.to)! }));
     setDoc((d) => ({ nodes: [...d.nodes, ...newNodes], edges: [...d.edges, ...newEdges] }));
   };
 
@@ -146,12 +200,13 @@ export function FlowchartEditor() {
     (sx: number, sy: number) => {
       const rect = svgRef.current?.getBoundingClientRect();
       if (!rect) return { x: 0, y: 0 };
+      const currentView = viewRef.current;
       return {
-        x: (sx - rect.left - view.x) / view.k,
-        y: (sy - rect.top - view.y) / view.k,
+        x: (sx - rect.left - currentView.x) / currentView.k,
+        y: (sy - rect.top - currentView.y) / currentView.k,
       };
     },
-    [view],
+    [],
   );
 
   const addNode = (kind: SymbolKind) => {
@@ -195,9 +250,7 @@ export function FlowchartEditor() {
 
   const handleMouseMove = (e: React.MouseEvent) => {
     if (dragRef.current) {
-      const w = screenToWorld(e.clientX, e.clientY);
-      const { id, offX, offY } = dragRef.current;
-      updateNode(id, { x: Math.round((w.x - offX) / 8) * 8, y: Math.round((w.y - offY) / 8) * 8 });
+      moveDraggedNode(e.clientX, e.clientY);
     } else if (pendingEdge) {
       const w = screenToWorld(e.clientX, e.clientY);
       setPendingEdge({ ...pendingEdge, x: w.x, y: w.y });
@@ -210,11 +263,38 @@ export function FlowchartEditor() {
     }
   };
 
+  const moveDraggedNode = (clientX: number, clientY: number) => {
+    if (!dragRef.current) return;
+    const w = screenToWorld(clientX, clientY);
+    const { id, offX, offY } = dragRef.current;
+    updateNode(id, { x: Math.round((w.x - offX) / 8) * 8, y: Math.round((w.y - offY) / 8) * 8 });
+  };
+
   const handleMouseUp = () => {
     dragRef.current = null;
     panRef.current = null;
     setPendingEdge(null);
   };
+
+  useEffect(() => {
+    const onMouseMove = (e: MouseEvent) => {
+      if (dragRef.current) moveDraggedNode(e.clientX, e.clientY);
+      if (panRef.current) {
+        setView((v) => ({
+          ...v,
+          x: panRef.current!.vx + (e.clientX - panRef.current!.x),
+          y: panRef.current!.vy + (e.clientY - panRef.current!.y),
+        }));
+      }
+    };
+    const onMouseUp = () => handleMouseUp();
+    window.addEventListener("mousemove", onMouseMove);
+    window.addEventListener("mouseup", onMouseUp);
+    return () => {
+      window.removeEventListener("mousemove", onMouseMove);
+      window.removeEventListener("mouseup", onMouseUp);
+    };
+  }, []);
 
   const handleSvgMouseDown = (e: React.MouseEvent) => {
     setSelected(null);
@@ -312,8 +392,7 @@ export function FlowchartEditor() {
     const reader = new FileReader();
     reader.onload = () => {
       try {
-        const parsed = JSON.parse(String(reader.result)) as FlowDoc;
-        if (parsed.nodes && parsed.edges) setDoc(parsed);
+        setDoc(normalizeDoc(JSON.parse(String(reader.result))));
       } catch {
         alert("Arquivo inválido");
       }

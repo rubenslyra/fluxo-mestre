@@ -75,13 +75,19 @@ export const generateFlowchart = createServerFn({ method: "POST" })
     return z.object({ description: z.string().min(10).max(8000) }).parse(input);
   })
   .handler(async ({ data }) => {
-    const key = process.env.LOVABLE_API_KEY;
-    if (!key) throw new Error("LOVABLE_API_KEY não configurada no servidor.");
-
-    const gateway = createLovableAiGatewayProvider(key);
-    const model = gateway("google/gemini-3-flash-preview");
-
     try {
+      const key = process.env.LOVABLE_API_KEY ?? process.env.AI_GATEWAY_API_KEY;
+      if (!key) {
+        return {
+          ok: false as const,
+          error:
+            "IA não configurada neste ambiente. Configure LOVABLE_API_KEY (ou AI_GATEWAY_API_KEY) no servidor e reinicie o app.",
+        };
+      }
+
+      const gateway = createLovableAiGatewayProvider(key);
+      const model = gateway("google/gemini-3-flash-preview");
+
       const { experimental_output } = await generateText({
         model,
         system: SYSTEM_PROMPT,
