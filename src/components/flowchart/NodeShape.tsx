@@ -55,15 +55,6 @@ export function NodeShape({
         </div>
       </foreignObject>
 
-      {/* Out port(s) */}
-      {isDecision ? (
-        <>
-          <PortDot cx={node.w / 2} cy={0} label="S" onMouseDown={(e) => onPortMouseDown?.("out", e)} />
-          <PortDot cx={0} cy={node.h / 2} label="N" onMouseDown={(e) => onPortMouseDown?.("out", e)} />
-        </>
-      ) : (
-        <PortDot cx={0} cy={node.h / 2} onMouseDown={(e) => onPortMouseDown?.("out", e)} />
-      )}
       {/* In hover area */}
       <rect
         x={-node.w / 2}
@@ -73,6 +64,16 @@ export function NodeShape({
         fill="transparent"
         onMouseUp={onPortMouseUp}
       />
+
+      {/* Out port(s) */}
+      {isDecision ? (
+        <>
+          <PortDot cx={node.w / 2} cy={0} label="S" onMouseDown={(e) => onPortMouseDown?.("out", e)} />
+          <PortDot cx={0} cy={node.h / 2} label="N" onMouseDown={(e) => onPortMouseDown?.("out", e)} />
+        </>
+      ) : (
+        <PortDot cx={0} cy={node.h / 2} onMouseDown={(e) => onPortMouseDown?.("out", e)} />
+      )}
     </g>
   );
 }
