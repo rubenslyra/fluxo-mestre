@@ -2,6 +2,9 @@ node_modules
 dist
 .output
 .vinxi
+.tanstack
+.wrangler
 pnpm-lock.yaml
 package-lock.json
 routeTree.gen.ts
+docs/screenshots

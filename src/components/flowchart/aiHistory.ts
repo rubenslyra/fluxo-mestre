@@ -59,7 +59,9 @@ function safeWrite(key: string, value: unknown) {
   if (typeof window === "undefined") return;
   try {
     localStorage.setItem(key, JSON.stringify(value));
-  } catch {}
+  } catch {
+    // Ignore storage failures in private browsing or restricted environments.
+  }
 }
 
 export function loadTemplates(): PromptTemplate[] {
@@ -179,7 +181,11 @@ export function diffFlows(a: FlowDoc, b: FlowDoc): FlowDiff {
 }
 
 export function exportTemplatesJson(): string {
-  return JSON.stringify({ kind: "flowchart-templates", version: 1, items: loadTemplates() }, null, 2);
+  return JSON.stringify(
+    { kind: "flowchart-templates", version: 1, items: loadTemplates() },
+    null,
+    2,
+  );
 }
 
 export function importTemplatesJson(raw: string, mode: "merge" | "replace"): PromptTemplate[] {
@@ -187,8 +193,8 @@ export function importTemplatesJson(raw: string, mode: "merge" | "replace"): Pro
   const items: PromptTemplate[] = Array.isArray(parsed)
     ? parsed
     : Array.isArray(parsed.items)
-    ? parsed.items
-    : [];
+      ? parsed.items
+      : [];
   const cleaned: PromptTemplate[] = items
     .filter((t) => t && typeof t.name === "string" && typeof t.description === "string")
     .map((t) => ({

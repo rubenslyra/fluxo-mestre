@@ -5,7 +5,7 @@ interface NodeShapeProps {
   node: FlowNode;
   selected?: boolean;
   onMouseDown?: (e: React.MouseEvent) => void;
-  onDoubleClick?: () => void;
+  onDoubleClick?: (e: React.MouseEvent) => void;
   onPortMouseDown?: (port: "out", e: React.MouseEvent) => void;
   onPortMouseUp?: () => void;
 }
@@ -26,7 +26,11 @@ export function NodeShape({
       transform={`translate(${node.x}, ${node.y})`}
       style={{ cursor: "move" }}
       onMouseDown={onMouseDown}
-      onDoubleClick={onDoubleClick}
+      onDoubleClick={(e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        onDoubleClick?.(e);
+      }}
     >
       <path
         d={path}
@@ -34,7 +38,12 @@ export function NodeShape({
         stroke={selected ? "var(--color-node-selected)" : "var(--color-node-stroke)"}
         strokeWidth={selected ? 3 : 2}
       />
-      <foreignObject x={-node.w / 2 + 8} y={-node.h / 2 + 4} width={node.w - 16} height={node.h - 8}>
+      <foreignObject
+        x={-node.w / 2 + 8}
+        y={-node.h / 2 + 4}
+        width={node.w - 16}
+        height={node.h - 8}
+      >
         <div
           style={{
             width: "100%",
@@ -68,8 +77,18 @@ export function NodeShape({
       {/* Out port(s) */}
       {isDecision ? (
         <>
-          <PortDot cx={node.w / 2} cy={0} label="S" onMouseDown={(e) => onPortMouseDown?.("out", e)} />
-          <PortDot cx={0} cy={node.h / 2} label="N" onMouseDown={(e) => onPortMouseDown?.("out", e)} />
+          <PortDot
+            cx={node.w / 2}
+            cy={0}
+            label="S"
+            onMouseDown={(e) => onPortMouseDown?.("out", e)}
+          />
+          <PortDot
+            cx={0}
+            cy={node.h / 2}
+            label="N"
+            onMouseDown={(e) => onPortMouseDown?.("out", e)}
+          />
         </>
       ) : (
         <PortDot cx={0} cy={node.h / 2} onMouseDown={(e) => onPortMouseDown?.("out", e)} />
@@ -125,7 +144,11 @@ export function SymbolPreview({ kind, size = 56 }: { kind: SymbolKind; size?: nu
   const h = size * 0.9;
   const path = getShapePath(kind, w, h);
   return (
-    <svg width={size * ratio} height={size} viewBox={`${-(size * ratio) / 2} ${-size / 2} ${size * ratio} ${size}`}>
+    <svg
+      width={size * ratio}
+      height={size}
+      viewBox={`${-(size * ratio) / 2} ${-size / 2} ${size * ratio} ${size}`}
+    >
       <path d={path} fill="var(--color-node)" stroke="var(--color-node-stroke)" strokeWidth={1.5} />
     </svg>
   );

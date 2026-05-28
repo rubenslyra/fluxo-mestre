@@ -38,12 +38,18 @@ export function validateFlow(doc: FlowDoc): Issue[] {
         .filter((e) => e.from === n.id)
         .map((e) => (e.label ?? "").trim().toLowerCase());
       if (labels.length < 2) {
-        issues.push({ level: "warning", msg: `Decisão "${n.label}" deveria ter 2 saídas (Sim/Não)` });
+        issues.push({
+          level: "warning",
+          msg: `Decisão "${n.label}" deveria ter 2 saídas (Sim/Não)`,
+        });
       } else {
         const hasYes = labels.some((l) => /^(s|sim|yes|y|true|verdadeiro)$/i.test(l));
         const hasNo = labels.some((l) => /^(n|não|nao|no|false|falso)$/i.test(l));
         if (!hasYes || !hasNo) {
-          issues.push({ level: "warning", msg: `Decisão "${n.label}" sem rótulos Sim/Não nas saídas` });
+          issues.push({
+            level: "warning",
+            msg: `Decisão "${n.label}" sem rótulos Sim/Não nas saídas`,
+          });
         }
       }
     }

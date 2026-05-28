@@ -1,6 +1,6 @@
 import { SYMBOLS } from "./symbols";
 import type { FlowDoc, FlowEdge, FlowNode } from "./types";
-import type { GeneratedFlow } from "@/lib/flowchart-ai.functions";
+import type { GeneratedFlow } from "./flowGenerator";
 
 // Layout simples top-down em camadas (longest-path layering) com separação horizontal
 // para ramos de decisão. O posicionamento exato não é tão importante — o usuário
@@ -41,6 +41,8 @@ export function layoutGeneratedFlow(gen: GeneratedFlow): FlowDoc {
     visited.add(id);
     const lv = layer.get(id) ?? 0;
     for (const nb of adj.get(id) ?? []) {
+      // Back edges in loops should not push the target node to a later layer.
+      if (visited.has(nb)) continue;
       const next = Math.max(layer.get(nb) ?? 0, lv + 1);
       layer.set(nb, next);
       queue.push(nb);

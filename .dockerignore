@@ -1,0 +1,13 @@
+.git
+.tanstack
+.wrangler
+dist
+node_modules
+*.log
+docs
+.env
+.env.*
+*.key
+*.pem
+*.p12
+*.pfx

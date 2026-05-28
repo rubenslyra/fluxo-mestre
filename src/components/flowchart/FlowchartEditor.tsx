@@ -1,11 +1,18 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Code2, MonitorSmartphone } from "lucide-react";
+import {
+  APP_SETTINGS_CHANGED_EVENT,
+  defaultAppSettings,
+  loadAppSettings,
+} from "../settings/appSettings";
 import { SYMBOLS, type SymbolKind } from "./symbols";
 import { SymbolPreview, NodeShape } from "./NodeShape";
 import { edgePath } from "./geometry";
 import type { FlowDoc, FlowNode } from "./types";
 import { AiGeneratorPanel } from "./AiGeneratorPanel";
+import { CodeGeneratorPanel } from "./CodeGeneratorPanel";
 import { validateFlow } from "./validation";
-import { downloadPng, downloadSvg } from "./exportImage";
+import { downloadPdf, downloadPng, downloadSvg } from "./exportImage";
 
 const STORAGE_KEY = "flowchart-doc-v1";
 
@@ -33,7 +40,9 @@ function loadDoc(): FlowDoc {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (raw) return normalizeDoc(JSON.parse(raw));
-  } catch {}
+  } catch {
+    // Ignore invalid or unavailable local storage data.
+  }
   return initialDoc;
 }
 
@@ -68,8 +77,14 @@ function normalizeDoc(value: unknown): FlowDoc {
         kind,
         x: Number.isFinite(partial.x) ? Number(partial.x) : 400,
         y: Number.isFinite(partial.y) ? Number(partial.y) : 80 + index * 120,
-        w: Number.isFinite(partial.w) && Number(partial.w) > 0 ? Number(partial.w) : def.defaultWidth,
-        h: Number.isFinite(partial.h) && Number(partial.h) > 0 ? Number(partial.h) : def.defaultHeight,
+        w:
+          Number.isFinite(partial.w) && Number(partial.w) > 0
+            ? Number(partial.w)
+            : def.defaultWidth,
+        h:
+          Number.isFinite(partial.h) && Number(partial.h) > 0
+            ? Number(partial.h)
+            : def.defaultHeight,
         label: typeof partial.label === "string" ? partial.label : def.defaultLabel,
       },
     ];
@@ -86,14 +101,42 @@ function normalizeDoc(value: unknown): FlowDoc {
     const id = String(partial.id || `e${index + 1}`);
     if (seenEdges.has(id)) return [];
     seenEdges.add(id);
-    return [{ id, from, to, label: typeof partial.label === "string" && partial.label ? partial.label : undefined }];
+    return [
+      {
+        id,
+        from,
+        to,
+        label: typeof partial.label === "string" && partial.label ? partial.label : undefined,
+      },
+    ];
   });
 
   return { nodes, edges };
 }
 
 const EXPORT_PREFS_KEY = "flowchart-export-prefs-v1";
-type ExportFormat = "png" | "svg";
+type ExportFormat = "png" | "svg" | "pdf";
+type SelectionBox = { startX: number; startY: number; x: number; y: number };
+
+function normalizeSelectionBox(box: SelectionBox) {
+  const x = Math.min(box.startX, box.x);
+  const y = Math.min(box.startY, box.y);
+  const w = Math.abs(box.x - box.startX);
+  const h = Math.abs(box.y - box.startY);
+  return { x, y, w, h };
+}
+
+function nodeIntersectsSelection(
+  node: FlowNode,
+  rect: { x: number; y: number; w: number; h: number },
+) {
+  const left = node.x - node.w / 2;
+  const right = node.x + node.w / 2;
+  const top = node.y - node.h / 2;
+  const bottom = node.y + node.h / 2;
+  return rect.x <= right && rect.x + rect.w >= left && rect.y <= bottom && rect.y + rect.h >= top;
+}
+
 function loadExportPrefs(): { format: ExportFormat; scale: number } {
   if (typeof window === "undefined") return { format: "png", scale: 2 };
   try {
@@ -101,34 +144,79 @@ function loadExportPrefs(): { format: ExportFormat; scale: number } {
     if (raw) {
       const p = JSON.parse(raw);
       const scale = Math.max(1, Math.min(4, Number(p.scale) || 2));
-      const format: ExportFormat = p.format === "svg" ? "svg" : "png";
+      const format: ExportFormat = p.format === "svg" || p.format === "pdf" ? p.format : "png";
       return { format, scale };
     }
-  } catch {}
+  } catch {
+    // Ignore invalid or unavailable local storage data.
+  }
   return { format: "png", scale: 2 };
 }
 
 export function FlowchartEditor() {
-  const [doc, setDocRaw] = useState<FlowDoc>(() => loadDoc());
+  const [storageReady, setStorageReady] = useState(false);
+  const [doc, setDocRaw] = useState<FlowDoc>(() => cloneDoc(initialDoc));
   const [past, setPast] = useState<FlowDoc[]>([]);
   const [future, setFuture] = useState<FlowDoc[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [selectedEdge, setSelectedEdge] = useState<string | null>(null);
+  const [selectionBox, setSelectionBox] = useState<SelectionBox | null>(null);
   const [view, setView] = useState({ x: 0, y: 0, k: 1 });
-  const [pendingEdge, setPendingEdge] = useState<{ from: string; x: number; y: number } | null>(null);
+  const [pendingEdge, setPendingEdge] = useState<{ from: string; x: number; y: number } | null>(
+    null,
+  );
   const [aiOpen, setAiOpen] = useState(false);
+  const [codeOpen, setCodeOpen] = useState(false);
   const [search, setSearch] = useState("");
   const [exportMenu, setExportMenu] = useState(false);
-  const initialPrefs = loadExportPrefs();
-  const [exportScale, setExportScale] = useState(initialPrefs.scale);
-  const [exportFormat, setExportFormat] = useState<ExportFormat>(initialPrefs.format);
+  const [exportScale, setExportScale] = useState(2);
+  const [exportFormat, setExportFormat] = useState<ExportFormat>("png");
+  const [showMobileEditor, setShowMobileEditor] = useState(false);
+  const [confirmBeforeClear, setConfirmBeforeClear] = useState(
+    defaultAppSettings.ui.confirmBeforeClear,
+  );
+
   useEffect(() => {
+    setDocRaw(loadDoc());
+    const prefs = loadExportPrefs();
+    setExportScale(prefs.scale);
+    setExportFormat(prefs.format);
+    setStorageReady(true);
+  }, []);
+
+  useEffect(() => {
+    const syncSettings = () => setConfirmBeforeClear(loadAppSettings().ui.confirmBeforeClear);
+    syncSettings();
+    window.addEventListener(APP_SETTINGS_CHANGED_EVENT, syncSettings);
+    return () => window.removeEventListener(APP_SETTINGS_CHANGED_EVENT, syncSettings);
+  }, []);
+
+  useEffect(() => {
+    if (!storageReady) return;
     try {
-      localStorage.setItem(EXPORT_PREFS_KEY, JSON.stringify({ format: exportFormat, scale: exportScale }));
-    } catch {}
-  }, [exportFormat, exportScale]);
+      localStorage.setItem(
+        EXPORT_PREFS_KEY,
+        JSON.stringify({ format: exportFormat, scale: exportScale }),
+      );
+    } catch {
+      // Ignore storage failures in private browsing or restricted environments.
+    }
+  }, [exportFormat, exportScale, storageReady]);
   const svgRef = useRef<SVGSVGElement>(null);
-  const dragRef = useRef<{ id: string; offX: number; offY: number } | null>(null);
+  const inspectorTextRef = useRef<HTMLTextAreaElement>(null);
+  const edgeLabelRef = useRef<HTMLInputElement>(null);
+  const dragRef = useRef<{
+    ids: string[];
+    startWorldX: number;
+    startWorldY: number;
+    initialNodes: Array<{ id: string; x: number; y: number }>;
+    startClientX: number;
+    startClientY: number;
+    committed: boolean;
+  } | null>(null);
   const panRef = useRef<{ x: number; y: number; vx: number; vy: number } | null>(null);
+  const selectionBoxRef = useRef<SelectionBox | null>(null);
   const docRef = useRef(doc);
   const viewRef = useRef(view);
   docRef.current = doc;
@@ -142,10 +230,15 @@ export function FlowchartEditor() {
 
   // setDoc that also commits the previous state to history
   type DocUpdater = FlowDoc | ((d: FlowDoc) => FlowDoc);
-  const setDoc = useCallback((updater: DocUpdater) => {
-    commit();
-    setDocRaw((d) => (typeof updater === "function" ? (updater as (d: FlowDoc) => FlowDoc)(d) : updater));
-  }, [commit]);
+  const setDoc = useCallback(
+    (updater: DocUpdater) => {
+      commit();
+      setDocRaw((d) =>
+        typeof updater === "function" ? (updater as (d: FlowDoc) => FlowDoc)(d) : updater,
+      );
+    },
+    [commit],
+  );
 
   const undo = useCallback(() => {
     setPast((p) => {
@@ -173,6 +266,28 @@ export function FlowchartEditor() {
     return new Set(doc.nodes.filter((n) => n.label.toLowerCase().includes(q)).map((n) => n.id));
   }, [search, doc.nodes]);
 
+  const selectedIdSet = useMemo(() => new Set(selectedIds), [selectedIds]);
+  const selectionPreviewIdSet = useMemo(() => {
+    if (!selectionBox) return null;
+    const rect = normalizeSelectionBox(selectionBox);
+    return new Set(
+      doc.nodes.filter((node) => nodeIntersectsSelection(node, rect)).map((node) => node.id),
+    );
+  }, [doc.nodes, selectionBox]);
+
+  const selectNodes = useCallback((ids: string[]) => {
+    const uniqueIds = [...new Set(ids)];
+    setSelectedIds(uniqueIds);
+    setSelected(uniqueIds.length === 1 ? uniqueIds[0] : null);
+    setSelectedEdge(null);
+  }, []);
+
+  const clearSelection = useCallback(() => {
+    setSelected(null);
+    setSelectedIds([]);
+    setSelectedEdge(null);
+  }, []);
+
   const applyAiDoc = (incoming: FlowDoc, mode: "replace" | "merge") => {
     if (mode === "replace") {
       setDoc(normalizeDoc(incoming));
@@ -185,29 +300,39 @@ export function FlowchartEditor() {
     normalizedIncoming.nodes.forEach((n) => remap.set(n.id, prefix + n.id));
     const offsetX = 0;
     const offsetY = (Math.max(0, ...doc.nodes.map((n) => n.y + n.h / 2)) || 0) + 80;
-    const newNodes = normalizedIncoming.nodes.map((n) => ({ ...n, id: remap.get(n.id)!, x: n.x + offsetX, y: n.y + offsetY }));
-    const newEdges = normalizedIncoming.edges.map((e) => ({ ...e, id: prefix + e.id, from: remap.get(e.from)!, to: remap.get(e.to)! }));
+    const newNodes = normalizedIncoming.nodes.map((n) => ({
+      ...n,
+      id: remap.get(n.id)!,
+      x: n.x + offsetX,
+      y: n.y + offsetY,
+    }));
+    const newEdges = normalizedIncoming.edges.map((e) => ({
+      ...e,
+      id: prefix + e.id,
+      from: remap.get(e.from)!,
+      to: remap.get(e.to)!,
+    }));
     setDoc((d) => ({ nodes: [...d.nodes, ...newNodes], edges: [...d.edges, ...newEdges] }));
   };
 
   useEffect(() => {
+    if (!storageReady) return;
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(doc));
-    } catch {}
-  }, [doc]);
+    } catch {
+      // Ignore storage failures in private browsing or restricted environments.
+    }
+  }, [doc, storageReady]);
 
-  const screenToWorld = useCallback(
-    (sx: number, sy: number) => {
-      const rect = svgRef.current?.getBoundingClientRect();
-      if (!rect) return { x: 0, y: 0 };
-      const currentView = viewRef.current;
-      return {
-        x: (sx - rect.left - currentView.x) / currentView.k,
-        y: (sy - rect.top - currentView.y) / currentView.k,
-      };
-    },
-    [],
-  );
+  const screenToWorld = useCallback((sx: number, sy: number) => {
+    const rect = svgRef.current?.getBoundingClientRect();
+    if (!rect) return { x: 0, y: 0 };
+    const currentView = viewRef.current;
+    return {
+      x: (sx - rect.left - currentView.x) / currentView.k,
+      y: (sy - rect.top - currentView.y) / currentView.k,
+    };
+  }, []);
 
   const addNode = (kind: SymbolKind) => {
     const def = SYMBOLS[kind];
@@ -224,85 +349,225 @@ export function FlowchartEditor() {
       label: def.defaultLabel,
     };
     setDoc((d) => ({ ...d, nodes: [...d.nodes, node] }));
-    setSelected(node.id);
+    selectNodes([node.id]);
   };
 
   // updates that happen continuously (drag, typing) — bypass history; caller commits once at the start
-  const updateNode = (id: string, patch: Partial<FlowNode>) =>
+  const updateNode = useCallback((id: string, patch: Partial<FlowNode>) => {
     setDocRaw((d) => ({ ...d, nodes: d.nodes.map((n) => (n.id === id ? { ...n, ...patch } : n)) }));
+  }, []);
+
+  const updateNodes = useCallback((positions: Array<{ id: string; x: number; y: number }>) => {
+    const byId = new Map(positions.map((position) => [position.id, position]));
+    setDocRaw((d) => ({
+      ...d,
+      nodes: d.nodes.map((node) => {
+        const position = byId.get(node.id);
+        return position ? { ...node, x: position.x, y: position.y } : node;
+      }),
+    }));
+  }, []);
+
+  const setActiveSelectionBox = useCallback((box: SelectionBox | null) => {
+    selectionBoxRef.current = box;
+    setSelectionBox(box);
+  }, []);
+
+  const startSelectionBox = useCallback(
+    (clientX: number, clientY: number) => {
+      const w = screenToWorld(clientX, clientY);
+      clearSelection();
+      setActiveSelectionBox({ startX: w.x, startY: w.y, x: w.x, y: w.y });
+    },
+    [clearSelection, screenToWorld, setActiveSelectionBox],
+  );
+
+  const updateSelectionBox = useCallback(
+    (clientX: number, clientY: number) => {
+      const box = selectionBoxRef.current;
+      if (!box) return;
+      const w = screenToWorld(clientX, clientY);
+      setActiveSelectionBox({ ...box, x: w.x, y: w.y });
+    },
+    [screenToWorld, setActiveSelectionBox],
+  );
+
+  const findNodesInSelection = useCallback((box: SelectionBox) => {
+    const rect = normalizeSelectionBox(box);
+    if (Math.max(rect.w, rect.h) < 4) {
+      const point = { x: box.x, y: box.y };
+      const node = [...docRef.current.nodes]
+        .reverse()
+        .find(
+          (node) =>
+            point.x >= node.x - node.w / 2 &&
+            point.x <= node.x + node.w / 2 &&
+            point.y >= node.y - node.h / 2 &&
+            point.y <= node.y + node.h / 2,
+        );
+      return node ? [node] : [];
+    }
+    return docRef.current.nodes.filter((node) => nodeIntersectsSelection(node, rect));
+  }, []);
+
+  const finishSelectionBox = useCallback(
+    (clientX?: number, clientY?: number) => {
+      let box = selectionBoxRef.current;
+      if (!box) return;
+      if (typeof clientX === "number" && typeof clientY === "number") {
+        const w = screenToWorld(clientX, clientY);
+        box = { ...box, x: w.x, y: w.y };
+      }
+      const targets = findNodesInSelection(box);
+      selectNodes(targets.map((node) => node.id));
+      setActiveSelectionBox(null);
+    },
+    [findNodesInSelection, screenToWorld, selectNodes, setActiveSelectionBox],
+  );
 
   const deleteSelected = () => {
-    if (!selected) return;
-    setDoc((d) => ({
-      nodes: d.nodes.filter((n) => n.id !== selected),
-      edges: d.edges.filter((e) => e.from !== selected && e.to !== selected),
-    }));
-    setSelected(null);
+    if (selectedIds.length > 0) {
+      const idsToDelete = new Set(selectedIds);
+      setDoc((d) => ({
+        nodes: d.nodes.filter((n) => !idsToDelete.has(n.id)),
+        edges: d.edges.filter((e) => !idsToDelete.has(e.from) && !idsToDelete.has(e.to)),
+      }));
+      clearSelection();
+      return;
+    }
+
+    if (selectedEdge) {
+      setDoc((d) => ({
+        ...d,
+        edges: d.edges.filter((e) => e.id !== selectedEdge),
+      }));
+      clearSelection();
+    }
   };
 
   const handleNodeMouseDown = (node: FlowNode, e: React.MouseEvent) => {
+    if (e.button !== 0) return;
     e.stopPropagation();
-    setSelected(node.id);
+    if (e.shiftKey) {
+      e.preventDefault();
+      startSelectionBox(e.clientX, e.clientY);
+      return;
+    }
+    const idsToDrag = selectedIdSet.has(node.id) ? selectedIds : [node.id];
+    if (!selectedIdSet.has(node.id)) selectNodes([node.id]);
     const w = screenToWorld(e.clientX, e.clientY);
-    commit(); // snapshot before drag
-    dragRef.current = { id: node.id, offX: w.x - node.x, offY: w.y - node.y };
+    const idsToDragSet = new Set(idsToDrag);
+    dragRef.current = {
+      ids: idsToDrag,
+      startWorldX: w.x,
+      startWorldY: w.y,
+      initialNodes: docRef.current.nodes
+        .filter((currentNode) => idsToDragSet.has(currentNode.id))
+        .map((currentNode) => ({ id: currentNode.id, x: currentNode.x, y: currentNode.y })),
+      startClientX: e.clientX,
+      startClientY: e.clientY,
+      committed: false,
+    };
   };
 
   const handleMouseMove = (e: React.MouseEvent) => {
-    if (dragRef.current) {
+    if (selectionBoxRef.current) {
+      updateSelectionBox(e.clientX, e.clientY);
+    } else if (dragRef.current) {
       moveDraggedNode(e.clientX, e.clientY);
     } else if (pendingEdge) {
       const w = screenToWorld(e.clientX, e.clientY);
       setPendingEdge({ ...pendingEdge, x: w.x, y: w.y });
     } else if (panRef.current) {
+      const pan = panRef.current;
       setView((v) => ({
         ...v,
-        x: panRef.current!.vx + (e.clientX - panRef.current!.x),
-        y: panRef.current!.vy + (e.clientY - panRef.current!.y),
+        x: pan.vx + (e.clientX - pan.x),
+        y: pan.vy + (e.clientY - pan.y),
       }));
     }
   };
 
-  const moveDraggedNode = (clientX: number, clientY: number) => {
-    if (!dragRef.current) return;
-    const w = screenToWorld(clientX, clientY);
-    const { id, offX, offY } = dragRef.current;
-    updateNode(id, { x: Math.round((w.x - offX) / 8) * 8, y: Math.round((w.y - offY) / 8) * 8 });
-  };
+  const moveDraggedNode = useCallback(
+    (clientX: number, clientY: number) => {
+      if (!dragRef.current) return;
+      const drag = dragRef.current;
+      if (!drag.committed) {
+        const distance = Math.hypot(clientX - drag.startClientX, clientY - drag.startClientY);
+        if (distance < 4) return;
+        commit();
+        drag.committed = true;
+      }
+      const w = screenToWorld(clientX, clientY);
+      const dx = w.x - drag.startWorldX;
+      const dy = w.y - drag.startWorldY;
+      updateNodes(
+        drag.initialNodes.map((node) => ({
+          id: node.id,
+          x: Math.round((node.x + dx) / 8) * 8,
+          y: Math.round((node.y + dy) / 8) * 8,
+        })),
+      );
+    },
+    [commit, screenToWorld, updateNodes],
+  );
 
-  const handleMouseUp = () => {
-    dragRef.current = null;
-    panRef.current = null;
-    setPendingEdge(null);
-  };
+  const handleMouseUp = useCallback(
+    (clientX?: number, clientY?: number) => {
+      if (selectionBoxRef.current) {
+        finishSelectionBox(clientX, clientY);
+        return;
+      }
+      dragRef.current = null;
+      panRef.current = null;
+      setPendingEdge(null);
+    },
+    [finishSelectionBox],
+  );
 
   useEffect(() => {
     const onMouseMove = (e: MouseEvent) => {
+      if (selectionBoxRef.current) {
+        updateSelectionBox(e.clientX, e.clientY);
+        return;
+      }
       if (dragRef.current) moveDraggedNode(e.clientX, e.clientY);
       if (panRef.current) {
+        const pan = panRef.current;
         setView((v) => ({
           ...v,
-          x: panRef.current!.vx + (e.clientX - panRef.current!.x),
-          y: panRef.current!.vy + (e.clientY - panRef.current!.y),
+          x: pan.vx + (e.clientX - pan.x),
+          y: pan.vy + (e.clientY - pan.y),
         }));
       }
     };
-    const onMouseUp = () => handleMouseUp();
+    const onMouseUp = (e: MouseEvent) => handleMouseUp(e.clientX, e.clientY);
     window.addEventListener("mousemove", onMouseMove);
     window.addEventListener("mouseup", onMouseUp);
     return () => {
       window.removeEventListener("mousemove", onMouseMove);
       window.removeEventListener("mouseup", onMouseUp);
     };
-  }, []);
+  }, [handleMouseUp, moveDraggedNode, updateSelectionBox]);
 
   const handleSvgMouseDown = (e: React.MouseEvent) => {
-    setSelected(null);
+    if (e.button !== 0) return;
+    if (e.shiftKey) {
+      e.preventDefault();
+      startSelectionBox(e.clientX, e.clientY);
+      return;
+    }
+    clearSelection();
     panRef.current = { x: e.clientX, y: e.clientY, vx: view.x, vy: view.y };
   };
 
   const startEdge = (fromId: string, e: React.MouseEvent) => {
+    if (e.shiftKey) {
+      startSelectionBox(e.clientX, e.clientY);
+      return;
+    }
     const w = screenToWorld(e.clientX, e.clientY);
+    clearSelection();
     setPendingEdge({ from: fromId, x: w.x, y: w.y });
   };
 
@@ -349,7 +614,10 @@ export function FlowchartEditor() {
         redo();
         return;
       }
-      if ((e.key === "Delete" || e.key === "Backspace") && selected) {
+      if (
+        (e.key === "Delete" || e.key === "Backspace") &&
+        (selectedIds.length > 0 || selectedEdge)
+      ) {
         if (inField) return;
         deleteSelected();
       }
@@ -358,12 +626,22 @@ export function FlowchartEditor() {
     return () => window.removeEventListener("keydown", onKey);
   });
 
-  const promptLabel = (node: FlowNode) => {
-    const v = window.prompt("Texto do símbolo:", node.label);
-    if (v !== null && v !== node.label) {
-      commit();
-      updateNode(node.id, { label: v });
-    }
+  const focusLabelEditor = (nodeId: string) => {
+    selectNodes([nodeId]);
+    window.requestAnimationFrame(() => {
+      inspectorTextRef.current?.focus();
+      inspectorTextRef.current?.select();
+    });
+  };
+
+  const focusEdgeLabelEditor = (edgeId: string) => {
+    setSelected(null);
+    setSelectedIds([]);
+    setSelectedEdge(edgeId);
+    window.requestAnimationFrame(() => {
+      edgeLabelRef.current?.focus();
+      edgeLabelRef.current?.select();
+    });
   };
 
   const getInner = () => svgRef.current?.querySelector("#world")?.innerHTML ?? "";
@@ -377,6 +655,20 @@ export function FlowchartEditor() {
     if (doc.nodes.length === 0) return;
     await downloadPng(doc, getInner(), scale);
   };
+
+  const exportPDF = async () => {
+    if (doc.nodes.length === 0) return;
+    await downloadPdf(doc, getInner());
+  };
+
+  const runSelectedExport = () => {
+    if (exportFormat === "png") void exportPNG(exportScale);
+    else if (exportFormat === "pdf") void exportPDF();
+    else exportSVG();
+  };
+
+  const exportFormatLabel =
+    exportFormat === "png" ? `PNG ${exportScale}x` : exportFormat.toUpperCase();
 
   const exportJSON = () => {
     const blob = new Blob([JSON.stringify(doc, null, 2)], { type: "application/json" });
@@ -393,6 +685,7 @@ export function FlowchartEditor() {
     reader.onload = () => {
       try {
         setDoc(normalizeDoc(JSON.parse(String(reader.result))));
+        clearSelection();
       } catch {
         alert("Arquivo inválido");
       }
@@ -401,26 +694,36 @@ export function FlowchartEditor() {
   };
 
   const clearAll = () => {
-    if (confirm("Limpar todo o fluxograma?")) setDoc({ nodes: [], edges: [] });
+    if (!confirmBeforeClear || confirm("Limpar todo o fluxograma?")) {
+      setDoc({ nodes: [], edges: [] });
+      clearSelection();
+    }
   };
 
-  const loadExample = () => setDoc(initialDoc);
+  const loadExample = () => {
+    setDoc(initialDoc);
+    clearSelection();
+  };
 
   const selectedNode = doc.nodes.find((n) => n.id === selected) ?? null;
+  const selectedNodeCount = selectedIds.length;
+  const selectedEdgeData = doc.edges.find((e) => e.id === selectedEdge) ?? null;
 
   const validation = validateFlow(doc);
 
   return (
-    <div className="flex h-screen w-full flex-col bg-background">
+    <div className="flex h-full min-h-0 w-full flex-col bg-background">
       {/* Top bar */}
-      <header className="flex items-center justify-between border-b border-border bg-card px-6 py-3">
+      <header
+        className={`${showMobileEditor ? "flex" : "hidden"} shrink-0 flex-wrap items-center justify-between gap-3 border-b border-border bg-card px-4 py-3 md:flex`}
+      >
         <div className="flex items-baseline gap-3">
           <h1 className="text-2xl font-bold tracking-tight">FluxoLab</h1>
           <span className="text-xs uppercase tracking-widest text-muted-foreground">
             ISO 5807 · Lógica & Algoritmos
           </span>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <div className="mr-1 flex overflow-hidden rounded-md border border-border">
             <button
               onClick={undo}
@@ -446,7 +749,18 @@ export function FlowchartEditor() {
           >
             🤖 Gerar com IA
           </button>
-          <button onClick={loadExample} className="rounded-md border border-border px-3 py-1.5 text-sm hover:bg-muted">
+          <button
+            onClick={() => setCodeOpen(true)}
+            className="inline-flex items-center gap-1.5 rounded-md border border-border px-3 py-1.5 text-sm hover:bg-muted"
+            title="Gerar código a partir do fluxograma"
+          >
+            <Code2 aria-hidden className="size-4" />
+            Gerar código
+          </button>
+          <button
+            onClick={loadExample}
+            className="rounded-md border border-border px-3 py-1.5 text-sm hover:bg-muted"
+          >
             Exemplo
           </button>
           <label className="cursor-pointer rounded-md border border-border px-3 py-1.5 text-sm hover:bg-muted">
@@ -458,20 +772,20 @@ export function FlowchartEditor() {
               onChange={(e) => e.target.files?.[0] && importJSON(e.target.files[0])}
             />
           </label>
-          <button onClick={exportJSON} className="rounded-md border border-border px-3 py-1.5 text-sm hover:bg-muted">
+          <button
+            onClick={exportJSON}
+            className="rounded-md border border-border px-3 py-1.5 text-sm hover:bg-muted"
+          >
             Exportar JSON
           </button>
           <div className="relative">
             <div className="flex overflow-hidden rounded-md">
               <button
-                onClick={() => {
-                  if (exportFormat === "png") void exportPNG(exportScale);
-                  else exportSVG();
-                }}
+                onClick={runSelectedExport}
                 className="bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground hover:opacity-90"
                 title="Repete a última escolha de exportação"
               >
-                Exportar {exportFormat === "png" ? `PNG ${exportScale}x` : "SVG"}
+                Exportar {exportFormatLabel}
               </button>
               <button
                 onClick={() => setExportMenu((v) => !v)}
@@ -487,7 +801,7 @@ export function FlowchartEditor() {
                   Formato
                 </p>
                 <div className="mb-3 flex gap-1">
-                  {(["png", "svg"] as ExportFormat[]).map((f) => (
+                  {(["png", "svg", "pdf"] as ExportFormat[]).map((f) => (
                     <button
                       key={f}
                       onClick={() => setExportFormat(f)}
@@ -523,15 +837,19 @@ export function FlowchartEditor() {
                     </div>
                   </>
                 )}
+                {exportFormat === "pdf" && (
+                  <p className="mb-3 rounded border border-border bg-muted/50 p-2 text-[11px] text-muted-foreground">
+                    PDF em A4 paisagem, com margem e divisão automática em páginas.
+                  </p>
+                )}
                 <button
                   onClick={() => {
                     setExportMenu(false);
-                    if (exportFormat === "png") void exportPNG(exportScale);
-                    else exportSVG();
+                    runSelectedExport();
                   }}
                   className="w-full rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground hover:opacity-90"
                 >
-                  Baixar {exportFormat === "png" ? `PNG (${exportScale}x)` : "SVG"}
+                  Baixar {exportFormatLabel}
                 </button>
                 <p className="mt-2 text-[10px] text-muted-foreground">
                   Sua escolha fica salva entre sessões.
@@ -543,8 +861,52 @@ export function FlowchartEditor() {
       </header>
 
       <AiGeneratorPanel open={aiOpen} onClose={() => setAiOpen(false)} onApply={applyAiDoc} />
+      <CodeGeneratorPanel doc={doc} open={codeOpen} onClose={() => setCodeOpen(false)} />
 
-      <div className="flex flex-1 overflow-hidden">
+      {!showMobileEditor && (
+        <section className="flex min-h-0 w-screen max-w-full flex-1 items-center justify-center overflow-hidden bg-canvas px-5 py-8 md:hidden">
+          <div className="w-[min(18rem,calc(100vw-2.5rem))] rounded-lg border border-border bg-card p-5 shadow-lg">
+            <div className="mb-4 flex items-center gap-3">
+              <span className="flex size-10 items-center justify-center rounded-md bg-primary/10 text-primary">
+                <MonitorSmartphone aria-hidden className="size-5" />
+              </span>
+              <div>
+                <h2 className="text-lg font-bold text-foreground">FluxoLab</h2>
+                <p className="text-xs text-muted-foreground">ISO 5807 para lógica e algoritmos</p>
+              </div>
+            </div>
+            <p className="text-sm leading-6 text-muted-foreground">
+              O editor é mais produtivo em tablet, desktop ou telas maiores. No celular, use esta
+              entrada para conhecer o projeto e retome a criação completa em uma tela ampla.
+            </p>
+            <div className="mt-4 grid grid-cols-2 gap-2 text-xs">
+              <span className="rounded-md border border-border bg-background px-3 py-2">
+                Tema claro/escuro
+              </span>
+              <span className="rounded-md border border-border bg-background px-3 py-2">
+                IA local ou API
+              </span>
+              <span className="rounded-md border border-border bg-background px-3 py-2">
+                Exportação PNG/PDF
+              </span>
+              <span className="rounded-md border border-border bg-background px-3 py-2">
+                Código por blueprint
+              </span>
+            </div>
+            <button
+              type="button"
+              onClick={() => setShowMobileEditor(true)}
+              className="mt-5 w-full rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:opacity-90"
+            >
+              Abrir editor mesmo assim
+            </button>
+          </div>
+        </section>
+      )}
+
+      <div
+        className={`${showMobileEditor ? "flex" : "hidden"} min-h-0 flex-1 overflow-hidden md:flex`}
+      >
         {/* Sidebar */}
         <aside className="w-64 shrink-0 overflow-y-auto border-r border-border bg-card p-4">
           <h2 className="mb-2 text-xs font-bold uppercase tracking-widest text-muted-foreground">
@@ -585,7 +947,9 @@ export function FlowchartEditor() {
             <ul className="list-disc space-y-1 pl-4">
               <li>Clique num símbolo para adicionar</li>
               <li>Arraste para posicionar</li>
-              <li>Duplo-clique para editar texto</li>
+              <li>Shift + arrastar: selecionar por área</li>
+              <li>Duplo-clique foca a edição no painel</li>
+              <li>Clique numa seta para editar ou remover</li>
               <li>Arraste a bolinha amarela até outro símbolo para conectar</li>
               <li>Delete remove o selecionado</li>
               <li>Roda do mouse: zoom · Arrastar fundo: mover</li>
@@ -601,14 +965,14 @@ export function FlowchartEditor() {
         </aside>
 
         {/* Canvas */}
-        <main className="relative flex-1 overflow-hidden bg-canvas">
+        <main className="relative min-w-0 flex-1 overflow-hidden bg-canvas">
           <div className="bg-grid absolute inset-0" />
           <svg
             ref={svgRef}
             className="relative h-full w-full"
             onMouseDown={handleSvgMouseDown}
             onMouseMove={handleMouseMove}
-            onMouseUp={handleMouseUp}
+            onMouseUp={(e) => handleMouseUp(e.clientX, e.clientY)}
             onWheel={handleWheel}
           >
             <defs>
@@ -631,19 +995,35 @@ export function FlowchartEditor() {
                 const to = doc.nodes.find((n) => n.id === e.to);
                 if (!from || !to) return null;
                 const { d, mid } = edgePath(from, to);
+                const edgeSelected = selectedEdge === e.id;
                 return (
                   <g key={e.id}>
                     <path
                       d={d}
                       fill="none"
-                      stroke="var(--color-edge)"
-                      strokeWidth={2}
+                      stroke={edgeSelected ? "var(--color-node-selected)" : "var(--color-edge)"}
+                      strokeWidth={edgeSelected ? 3 : 2}
                       markerEnd="url(#arrow)"
                     />
                     {e.label && (
                       <g transform={`translate(${mid.x}, ${mid.y})`}>
-                        <rect x={-18} y={-10} width={36} height={18} rx={4} fill="var(--color-card)" stroke="var(--color-border)" />
-                        <text textAnchor="middle" y={4} fontSize={11} fill="var(--color-foreground)">
+                        <rect
+                          x={-18}
+                          y={-10}
+                          width={36}
+                          height={18}
+                          rx={4}
+                          fill="var(--color-card)"
+                          stroke={
+                            edgeSelected ? "var(--color-node-selected)" : "var(--color-border)"
+                          }
+                        />
+                        <text
+                          textAnchor="middle"
+                          y={4}
+                          fontSize={11}
+                          fill="var(--color-foreground)"
+                        >
                           {e.label}
                         </text>
                       </g>
@@ -655,18 +1035,14 @@ export function FlowchartEditor() {
                       strokeWidth={12}
                       onClick={(ev) => {
                         ev.stopPropagation();
-                        const lbl = window.prompt("Rótulo da seta (ex: Sim/Não)", e.label ?? "");
-                        if (lbl !== null) {
-                          setDoc((d2) => ({
-                            ...d2,
-                            edges: d2.edges.map((x) => (x.id === e.id ? { ...x, label: lbl || undefined } : x)),
-                          }));
-                        }
+                        setSelected(null);
+                        setSelectedIds([]);
+                        setSelectedEdge(e.id);
                       }}
                       onDoubleClick={(ev) => {
+                        ev.preventDefault();
                         ev.stopPropagation();
-                        if (confirm("Remover esta conexão?"))
-                          setDoc((d2) => ({ ...d2, edges: d2.edges.filter((x) => x.id !== e.id) }));
+                        focusEdgeLabelEditor(e.id);
                       }}
                       style={{ cursor: "pointer" }}
                     />
@@ -675,21 +1051,22 @@ export function FlowchartEditor() {
               })}
 
               {/* pending edge */}
-              {pendingEdge && (() => {
-                const from = doc.nodes.find((n) => n.id === pendingEdge.from);
-                if (!from) return null;
-                return (
-                  <line
-                    x1={from.x}
-                    y1={from.y}
-                    x2={pendingEdge.x}
-                    y2={pendingEdge.y}
-                    stroke="var(--color-accent)"
-                    strokeWidth={2}
-                    strokeDasharray="6 4"
-                  />
-                );
-              })()}
+              {pendingEdge &&
+                (() => {
+                  const from = doc.nodes.find((n) => n.id === pendingEdge.from);
+                  if (!from) return null;
+                  return (
+                    <line
+                      x1={from.x}
+                      y1={from.y}
+                      x2={pendingEdge.x}
+                      y2={pendingEdge.y}
+                      stroke="var(--color-accent)"
+                      strokeWidth={2}
+                      strokeDasharray="6 4"
+                    />
+                  );
+                })()}
 
               {/* nodes */}
               {doc.nodes.map((n) => {
@@ -698,15 +1075,41 @@ export function FlowchartEditor() {
                   <g key={n.id} style={{ opacity: dim ? 0.25 : 1, transition: "opacity .15s" }}>
                     <NodeShape
                       node={n}
-                      selected={selected === n.id || (matchedIds?.has(n.id) ?? false)}
+                      selected={
+                        selectedIdSet.has(n.id) ||
+                        (selectionPreviewIdSet?.has(n.id) ?? false) ||
+                        (matchedIds?.has(n.id) ?? false)
+                      }
                       onMouseDown={(e) => handleNodeMouseDown(n, e)}
-                      onDoubleClick={() => promptLabel(n)}
+                      onDoubleClick={(e) => {
+                        e.preventDefault();
+                        focusLabelEditor(n.id);
+                      }}
                       onPortMouseDown={(_, e) => startEdge(n.id, e)}
                       onPortMouseUp={() => finishEdgeOn(n.id)}
                     />
                   </g>
                 );
               })}
+
+              {selectionBox &&
+                (() => {
+                  const rect = normalizeSelectionBox(selectionBox);
+                  return (
+                    <rect
+                      x={rect.x}
+                      y={rect.y}
+                      width={rect.w}
+                      height={rect.h}
+                      fill="var(--color-accent)"
+                      fillOpacity={0.08}
+                      stroke="var(--color-node-selected)"
+                      strokeWidth={1.5}
+                      strokeDasharray="6 4"
+                      pointerEvents="none"
+                    />
+                  );
+                })()}
             </g>
           </svg>
 
@@ -726,6 +1129,7 @@ export function FlowchartEditor() {
               </div>
               <label className="mb-1 block text-xs font-medium">Texto</label>
               <textarea
+                ref={inspectorTextRef}
                 value={selectedNode.label}
                 onFocus={() => commit()}
                 onChange={(e) => updateNode(selectedNode.id, { label: e.target.value })}
@@ -734,6 +1138,61 @@ export function FlowchartEditor() {
               />
               <p className="mt-2 text-[11px] text-muted-foreground">
                 {SYMBOLS[selectedNode.kind].description}
+              </p>
+            </div>
+          )}
+
+          {selectedNodeCount > 1 && (
+            <div className="absolute right-4 top-4 w-64 rounded-lg border border-border bg-card p-4 shadow-lg">
+              <div className="mb-2 flex items-center justify-between">
+                <span className="text-xs font-bold uppercase tracking-widest text-muted-foreground">
+                  Seleção
+                </span>
+                <button
+                  onClick={deleteSelected}
+                  className="text-xs text-destructive hover:underline"
+                >
+                  Excluir
+                </button>
+              </div>
+              <p className="text-sm font-medium">{selectedNodeCount} símbolos selecionados</p>
+            </div>
+          )}
+
+          {selectedEdgeData && (
+            <div className="absolute right-4 top-4 w-64 rounded-lg border border-border bg-card p-4 shadow-lg">
+              <div className="mb-2 flex items-center justify-between">
+                <span className="text-xs font-bold uppercase tracking-widest text-muted-foreground">
+                  Conexão
+                </span>
+                <button
+                  onClick={deleteSelected}
+                  className="text-xs text-destructive hover:underline"
+                >
+                  Excluir
+                </button>
+              </div>
+              <label className="mb-1 block text-xs font-medium">Rótulo</label>
+              <input
+                ref={edgeLabelRef}
+                value={selectedEdgeData.label ?? ""}
+                onFocus={() => commit()}
+                onChange={(e) => {
+                  const label = e.target.value;
+                  setDocRaw((d) => ({
+                    ...d,
+                    edges: d.edges.map((edge) =>
+                      edge.id === selectedEdgeData.id
+                        ? { ...edge, label: label || undefined }
+                        : edge,
+                    ),
+                  }));
+                }}
+                placeholder="Ex: Sim, Não"
+                className="w-full rounded-md border border-input bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+              />
+              <p className="mt-2 text-[11px] text-muted-foreground">
+                Use o rótulo para indicar saídas de decisão ou condições de fluxo.
               </p>
             </div>
           )}
@@ -751,9 +1210,11 @@ export function FlowchartEditor() {
           </div>
 
           {/* Validation panel */}
-          <div className="absolute bottom-4 right-4 w-72 rounded-lg border border-border bg-card/95 p-3 text-xs shadow-lg backdrop-blur">
+          <div className="absolute bottom-3 right-3 max-h-[min(18rem,calc(100%-1.5rem))] w-[min(18rem,calc(100%-1.5rem))] overflow-y-auto rounded-lg border border-border bg-card/95 p-3 text-xs shadow-lg backdrop-blur">
             <div className="mb-2 flex items-center justify-between">
-              <span className="font-bold uppercase tracking-widest text-muted-foreground">Validação</span>
+              <span className="font-bold uppercase tracking-widest text-muted-foreground">
+                Validação
+              </span>
               {validation.length === 0 ? (
                 <span className="rounded-full bg-emerald-500/15 px-2 py-0.5 text-[10px] font-semibold text-emerald-600">
                   OK
@@ -765,12 +1226,16 @@ export function FlowchartEditor() {
               )}
             </div>
             {validation.length === 0 ? (
-              <p className="text-muted-foreground">Fluxograma íntegro: tem início, fim e todos os símbolos conectados.</p>
+              <p className="text-muted-foreground">
+                Fluxograma íntegro: tem início, fim e todos os símbolos conectados.
+              </p>
             ) : (
               <ul className="max-h-40 space-y-1 overflow-y-auto">
                 {validation.map((v, i) => (
                   <li key={i} className="flex gap-1.5">
-                    <span className={v.level === "error" ? "text-destructive" : "text-amber-600"}>●</span>
+                    <span className={v.level === "error" ? "text-destructive" : "text-amber-600"}>
+                      ●
+                    </span>
                     <span className="text-foreground">{v.msg}</span>
                   </li>
                 ))}

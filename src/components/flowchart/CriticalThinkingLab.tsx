@@ -11,7 +11,10 @@ import {
 const STORAGE_KEY = "flowchart-challenges-progress-v1";
 const OBJ_OVERRIDE_KEY = "flowchart-objection-overrides-v1";
 
-type Progress = Record<string, { stepIdx: number; notes: string; revealed: boolean; done: boolean }>;
+type Progress = Record<
+  string,
+  { stepIdx: number; notes: string; revealed: boolean; done: boolean }
+>;
 // Por desafio: lista completa que substitui as objeções padrão (quando definida).
 type ObjectionOverrides = Record<string, StudentObjection[]>;
 
@@ -20,7 +23,9 @@ function loadJSON<T>(key: string, fallback: T): T {
   try {
     const raw = localStorage.getItem(key);
     if (raw) return JSON.parse(raw);
-  } catch {}
+  } catch {
+    // Ignore invalid or unavailable local storage data.
+  }
   return fallback;
 }
 
@@ -35,7 +40,10 @@ function getEffectiveObjections(c: Challenge, overrides: ObjectionOverrides): St
 }
 
 function escapeHtml(s: string) {
-  return s.replace(/[&<>"']/g, (m) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[m]!));
+  return s.replace(
+    /[&<>"']/g,
+    (m) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[m]!,
+  );
 }
 
 type PrintOptions = {
@@ -51,7 +59,9 @@ const MARGIN_CSS: Record<PrintOptions["margin"], string> = {
 };
 
 function exportPrintable(c: Challenge, objections: StudentObjection[], opts: PrintOptions) {
-  const pageBreakObj = opts.separateSections ? "page-break-before:always;" : "page-break-inside:avoid;";
+  const pageBreakObj = opts.separateSections
+    ? "page-break-before:always;"
+    : "page-break-inside:avoid;";
   const html = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"/>
 <title>${escapeHtml(c.title)} — Material de aula</title>
 <style>
@@ -96,14 +106,14 @@ ${objections
 <script>window.addEventListener('load',()=>setTimeout(()=>window.print(),300))</script>
 </body></html>`;
 
-  const w = window.open("", "_blank", "width=900,height=700");
+  const url = URL.createObjectURL(new Blob([html], { type: "text/html;charset=utf-8" }));
+  const w = window.open(url, "_blank", "width=900,height=700");
   if (!w) {
+    URL.revokeObjectURL(url);
     alert("Permita pop-ups para gerar o PDF.");
     return;
   }
-  w.document.open();
-  w.document.write(html);
-  w.document.close();
+  window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
 }
 
 function downloadJSON(filename: string, payload: unknown) {
@@ -118,14 +128,20 @@ function downloadJSON(filename: string, payload: unknown) {
 
 export function CriticalThinkingLab() {
   const [progress, setProgress] = useState<Progress>(() => loadJSON(STORAGE_KEY, {}));
-  const [objOverrides, setObjOverrides] = useState<ObjectionOverrides>(() => loadJSON(OBJ_OVERRIDE_KEY, {}));
+  const [objOverrides, setObjOverrides] = useState<ObjectionOverrides>(() =>
+    loadJSON(OBJ_OVERRIDE_KEY, {}),
+  );
   const [activeId, setActiveId] = useState<string>(CHALLENGES[0].id);
   const [filter, setFilter] = useState<"todos" | Difficulty>("todos");
   const [tagFilter, setTagFilter] = useState<"todos" | ObjectionTag>("todos");
   const [search, setSearch] = useState("");
   const [editingObj, setEditingObj] = useState(false);
   const [debateObjIdx, setDebateObjIdx] = useState<number | null>(null);
-  const [printOpts, setPrintOpts] = useState<PrintOptions>({ paper: "A4", margin: "normal", separateSections: true });
+  const [printOpts, setPrintOpts] = useState<PrintOptions>({
+    paper: "A4",
+    margin: "normal",
+    separateSections: true,
+  });
   const [showPrintMenu, setShowPrintMenu] = useState(false);
 
   // Live debate (one step at a time)
@@ -148,14 +164,23 @@ export function CriticalThinkingLab() {
 
   const persistProg = (next: Progress) => {
     setProgress(next);
-    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(next)); } catch {}
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+    } catch {
+      // Ignore storage failures in private browsing or restricted environments.
+    }
   };
   const persistObj = (next: ObjectionOverrides) => {
     setObjOverrides(next);
-    try { localStorage.setItem(OBJ_OVERRIDE_KEY, JSON.stringify(next)); } catch {}
+    try {
+      localStorage.setItem(OBJ_OVERRIDE_KEY, JSON.stringify(next));
+    } catch {
+      // Ignore storage failures in private browsing or restricted environments.
+    }
   };
 
-  const getProg = (id: string) => progress[id] ?? { stepIdx: 0, notes: "", revealed: false, done: false };
+  const getProg = (id: string) =>
+    progress[id] ?? { stepIdx: 0, notes: "", revealed: false, done: false };
   const updateProg = (id: string, patch: Partial<Progress[string]>) => {
     persistProg({ ...progress, [id]: { ...getProg(id), ...patch } });
   };
@@ -174,7 +199,9 @@ export function CriticalThinkingLab() {
         const hit =
           c.title.toLowerCase().includes(q) ||
           c.scenario.toLowerCase().includes(q) ||
-          objs.some((o) => o.question.toLowerCase().includes(q) || o.answer.toLowerCase().includes(q)) ||
+          objs.some(
+            (o) => o.question.toLowerCase().includes(q) || o.answer.toLowerCase().includes(q),
+          ) ||
           tagLabels.some((t) => t.includes(q));
         if (!hit) return false;
       }
@@ -189,13 +216,17 @@ export function CriticalThinkingLab() {
   const isCustom = !!objOverrides[active.id];
 
   // ---------- Editor handlers ----------
-  const ensureDraft = (): StudentObjection[] => objOverrides[active.id] ?? active.studentObjections.map((o) => ({ ...o }));
+  const ensureDraft = (): StudentObjection[] =>
+    objOverrides[active.id] ?? active.studentObjections.map((o) => ({ ...o }));
   const updateObjAt = (i: number, patch: Partial<StudentObjection>) => {
     const draft = ensureDraft().map((o, idx) => (idx === i ? { ...o, ...patch } : o));
     persistObj({ ...objOverrides, [active.id]: draft });
   };
   const addObj = () => {
-    const draft = [...ensureDraft(), { question: "Nova objeção do aluno...", answer: "Resposta do professor..." }];
+    const draft = [
+      ...ensureDraft(),
+      { question: "Nova objeção do aluno...", answer: "Resposta do professor..." },
+    ];
     persistObj({ ...objOverrides, [active.id]: draft });
   };
   const removeObjAt = (i: number) => {
@@ -214,7 +245,11 @@ export function CriticalThinkingLab() {
       alert("Você ainda não tem objeções customizadas para exportar.");
       return;
     }
-    downloadJSON("fluxolab-objecoes.json", { version: 1, exportedAt: new Date().toISOString(), overrides: objOverrides });
+    downloadJSON("fluxolab-objecoes.json", {
+      version: 1,
+      exportedAt: new Date().toISOString(),
+      overrides: objOverrides,
+    });
   };
   const importOverrides = (file: File) => {
     const reader = new FileReader();
@@ -244,9 +279,9 @@ export function CriticalThinkingLab() {
   };
 
   return (
-    <div className="flex h-full w-full overflow-hidden bg-background">
+    <div className="flex h-full w-full flex-col overflow-hidden bg-background md:flex-row">
       {/* Sidebar */}
-      <aside className="w-80 shrink-0 overflow-y-auto border-r border-border bg-card">
+      <aside className="h-72 w-full shrink-0 overflow-y-auto border-b border-border bg-card md:h-auto md:w-80 md:border-b-0 md:border-r">
         <div className="border-b border-border p-4">
           <h2 className="text-sm font-bold uppercase tracking-widest text-muted-foreground">
             Desafios de Pensamento Lógico
@@ -287,14 +322,18 @@ export function CriticalThinkingLab() {
           </div>
 
           <div className="mt-3">
-            <p className="mb-1 text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Dificuldade</p>
+            <p className="mb-1 text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+              Dificuldade
+            </p>
             <div className="flex flex-wrap gap-1">
               {(["todos", "iniciante", "intermediário", "avançado"] as const).map((f) => (
                 <button
                   key={f}
                   onClick={() => setFilter(f)}
                   className={`rounded-md px-2 py-1 text-[11px] font-medium capitalize transition ${
-                    filter === f ? "bg-primary text-primary-foreground" : "border border-border bg-background hover:bg-muted"
+                    filter === f
+                      ? "bg-primary text-primary-foreground"
+                      : "border border-border bg-background hover:bg-muted"
                   }`}
                 >
                   {f}
@@ -311,7 +350,9 @@ export function CriticalThinkingLab() {
               <button
                 onClick={() => setTagFilter("todos")}
                 className={`rounded-md px-2 py-1 text-[11px] font-medium transition ${
-                  tagFilter === "todos" ? "bg-primary text-primary-foreground" : "border border-border bg-background hover:bg-muted"
+                  tagFilter === "todos"
+                    ? "bg-primary text-primary-foreground"
+                    : "border border-border bg-background hover:bg-muted"
                 }`}
               >
                 todas
@@ -321,7 +362,9 @@ export function CriticalThinkingLab() {
                   key={t}
                   onClick={() => setTagFilter(t)}
                   className={`rounded-md px-2 py-1 text-[11px] font-medium transition ${
-                    tagFilter === t ? "bg-primary text-primary-foreground" : `${TAG_COLOR[t]} hover:opacity-80`
+                    tagFilter === t
+                      ? "bg-primary text-primary-foreground"
+                      : `${TAG_COLOR[t]} hover:opacity-80`
                   }`}
                   title={TAG_LABEL[t]}
                 >
@@ -338,7 +381,11 @@ export function CriticalThinkingLab() {
             return (
               <li key={c.id}>
                 <button
-                  onClick={() => { setActiveId(c.id); setEditingObj(false); setDebateObjIdx(null); }}
+                  onClick={() => {
+                    setActiveId(c.id);
+                    setEditingObj(false);
+                    setDebateObjIdx(null);
+                  }}
                   className={`flex w-full flex-col gap-1 px-4 py-3 text-left transition ${
                     activeId === c.id ? "bg-muted" : "hover:bg-muted/50"
                   }`}
@@ -346,11 +393,17 @@ export function CriticalThinkingLab() {
                   <div className="flex items-center justify-between gap-2">
                     <span className="text-sm font-semibold">{c.title}</span>
                     {p.done && (
-                      <span className="rounded-full bg-emerald-500/20 px-1.5 py-0.5 text-[10px] font-bold text-emerald-700 dark:text-emerald-400">✓</span>
+                      <span className="rounded-full bg-emerald-500/20 px-1.5 py-0.5 text-[10px] font-bold text-emerald-700 dark:text-emerald-400">
+                        ✓
+                      </span>
                     )}
                   </div>
                   <div className="flex items-center gap-2">
-                    <span className={`rounded px-1.5 py-0.5 text-[10px] font-medium capitalize ${diffColor[c.difficulty]}`}>{c.difficulty}</span>
+                    <span
+                      className={`rounded px-1.5 py-0.5 text-[10px] font-medium capitalize ${diffColor[c.difficulty]}`}
+                    >
+                      {c.difficulty}
+                    </span>
                     <span className="text-[11px] text-muted-foreground">{c.category}</span>
                   </div>
                 </button>
@@ -358,22 +411,32 @@ export function CriticalThinkingLab() {
             );
           })}
           {filtered.length === 0 && (
-            <li className="p-4 text-xs text-muted-foreground italic">Nenhum desafio com esses filtros.</li>
+            <li className="p-4 text-xs text-muted-foreground italic">
+              Nenhum desafio com esses filtros.
+            </li>
           )}
         </ul>
       </aside>
 
       {/* Main */}
-      <main className="flex-1 overflow-y-auto">
-        <div className="mx-auto max-w-3xl space-y-6 p-8">
+      <main className="min-h-0 flex-1 overflow-y-auto">
+        <div className="mx-auto max-w-3xl space-y-6 p-4 sm:p-6 md:p-8">
           <header className="flex items-start justify-between gap-4">
             <div>
               <div className="flex items-center gap-2">
-                <span className={`rounded px-2 py-0.5 text-xs font-medium capitalize ${diffColor[active.difficulty]}`}>{active.difficulty}</span>
-                <span className="text-xs uppercase tracking-widest text-muted-foreground">{active.category}</span>
+                <span
+                  className={`rounded px-2 py-0.5 text-xs font-medium capitalize ${diffColor[active.difficulty]}`}
+                >
+                  {active.difficulty}
+                </span>
+                <span className="text-xs uppercase tracking-widest text-muted-foreground">
+                  {active.category}
+                </span>
               </div>
               <h1 className="mt-2 text-3xl font-bold tracking-tight">{active.title}</h1>
-              <p className="mt-2 text-sm font-medium text-primary">Conceito lógico: {active.logicConcept}</p>
+              <p className="mt-2 text-sm font-medium text-primary">
+                Conceito lógico: {active.logicConcept}
+              </p>
             </div>
             <div className="relative shrink-0">
               <button
@@ -386,7 +449,9 @@ export function CriticalThinkingLab() {
               {showPrintMenu && (
                 <div className="absolute right-0 top-full z-20 mt-1 w-72 space-y-3 rounded-lg border border-border bg-card p-4 shadow-xl">
                   <div>
-                    <p className="mb-1 text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Tamanho do papel</p>
+                    <p className="mb-1 text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                      Tamanho do papel
+                    </p>
                     <div className="flex gap-1">
                       {(["A4", "Letter"] as const).map((p) => (
                         <button
@@ -400,7 +465,9 @@ export function CriticalThinkingLab() {
                     </div>
                   </div>
                   <div>
-                    <p className="mb-1 text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Margens</p>
+                    <p className="mb-1 text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                      Margens
+                    </p>
                     <div className="flex gap-1">
                       {(["estreita", "normal", "larga"] as const).map((m) => (
                         <button
@@ -417,12 +484,17 @@ export function CriticalThinkingLab() {
                     <input
                       type="checkbox"
                       checked={printOpts.separateSections}
-                      onChange={(e) => setPrintOpts((o) => ({ ...o, separateSections: e.target.checked }))}
+                      onChange={(e) =>
+                        setPrintOpts((o) => ({ ...o, separateSections: e.target.checked }))
+                      }
                     />
                     Cada objeção em página/seção separada
                   </label>
                   <button
-                    onClick={() => { exportPrintable(active, objections, printOpts); setShowPrintMenu(false); }}
+                    onClick={() => {
+                      exportPrintable(active, objections, printOpts);
+                      setShowPrintMenu(false);
+                    }}
                     className="w-full rounded-md bg-primary px-3 py-2 text-xs font-medium text-primary-foreground hover:opacity-90"
                   >
                     Gerar PDF agora
@@ -434,7 +506,9 @@ export function CriticalThinkingLab() {
 
           {/* Cenário */}
           <section className="rounded-xl border border-border bg-card p-5">
-            <h3 className="mb-2 text-xs font-bold uppercase tracking-widest text-muted-foreground">Cenário</h3>
+            <h3 className="mb-2 text-xs font-bold uppercase tracking-widest text-muted-foreground">
+              Cenário
+            </h3>
             <p className="text-sm leading-relaxed">{active.scenario}</p>
           </section>
 
@@ -442,18 +516,24 @@ export function CriticalThinkingLab() {
           <section className="rounded-xl border-2 border-primary/40 bg-gradient-to-br from-primary/5 to-transparent p-5">
             <div className="mb-3 flex items-center gap-2">
               <span className="text-lg">🎯</span>
-              <h3 className="text-xs font-bold uppercase tracking-widest text-primary">Por que estudar isso? (para o aluno cético)</h3>
+              <h3 className="text-xs font-bold uppercase tracking-widest text-primary">
+                Por que estudar isso? (para o aluno cético)
+              </h3>
             </div>
             <p className="text-sm leading-relaxed font-medium">{active.whyItMatters}</p>
             <div className="mt-4 rounded-lg bg-background/60 p-3">
-              <p className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground">Habilidade transferível</p>
+              <p className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground">
+                Habilidade transferível
+              </p>
               <p className="mt-1 text-sm italic">{active.transferableSkill}</p>
             </div>
           </section>
 
           {/* Aplicações reais */}
           <section className="rounded-xl border border-border bg-card p-5">
-            <h3 className="mb-3 text-xs font-bold uppercase tracking-widest text-muted-foreground">Onde isso aparece no mundo real</h3>
+            <h3 className="mb-3 text-xs font-bold uppercase tracking-widest text-muted-foreground">
+              Onde isso aparece no mundo real
+            </h3>
             <ul className="grid gap-2 sm:grid-cols-2">
               {active.realWorldApplications.map((app, i) => (
                 <li key={i} className="flex gap-2 rounded-md bg-muted/40 p-2 text-sm">
@@ -468,7 +548,12 @@ export function CriticalThinkingLab() {
           <section className="rounded-xl border border-border bg-card p-5">
             <div className="mb-3 flex items-center justify-between gap-2">
               <h3 className="text-xs font-bold uppercase tracking-widest text-muted-foreground">
-                Objeções típicas dos alunos {isCustom && <span className="ml-2 rounded bg-primary/15 px-1.5 py-0.5 text-[10px] text-primary">customizadas</span>}
+                Objeções típicas dos alunos{" "}
+                {isCustom && (
+                  <span className="ml-2 rounded bg-primary/15 px-1.5 py-0.5 text-[10px] text-primary">
+                    customizadas
+                  </span>
+                )}
               </h3>
               <div className="flex gap-1">
                 <button
@@ -496,12 +581,18 @@ export function CriticalThinkingLab() {
                 return (
                   <div key={i} className="rounded-lg border border-border bg-muted/20 p-3">
                     <div className="mb-2 flex items-center justify-between gap-2">
-                      <span className={`rounded px-1.5 py-0.5 text-[10px] font-medium ${TAG_COLOR[tag]}`}>{TAG_LABEL[tag]}</span>
+                      <span
+                        className={`rounded px-1.5 py-0.5 text-[10px] font-medium ${TAG_COLOR[tag]}`}
+                      >
+                        {TAG_LABEL[tag]}
+                      </span>
                       <div className="flex gap-1">
                         <button
                           onClick={() => setDebateObjIdx(isDebating ? null : i)}
                           className={`rounded-md px-2 py-0.5 text-[11px] font-medium transition ${
-                            isDebating ? "bg-primary text-primary-foreground" : "border border-border hover:bg-muted"
+                            isDebating
+                              ? "bg-primary text-primary-foreground"
+                              : "border border-border hover:bg-muted"
                           }`}
                         >
                           {isDebating ? "Fechar debate" : "🎭 Conduzir debate"}
@@ -540,91 +631,109 @@ export function CriticalThinkingLab() {
                           <span className="mr-1 text-primary">💬</span>
                           {obj.question}
                         </p>
-                        <p className="mt-2 border-l-2 border-primary pl-3 text-sm leading-relaxed text-foreground/90">{obj.answer}</p>
+                        <p className="mt-2 border-l-2 border-primary pl-3 text-sm leading-relaxed text-foreground/90">
+                          {obj.answer}
+                        </p>
                       </>
                     )}
 
-                    {isDebating && (() => {
-                      const playbook = SOCRATIC_PLAYBOOK[tag];
-                      const cur = playbook[Math.min(liveStep, playbook.length - 1)];
-                      const mm = String(Math.floor(seconds / 60)).padStart(2, "0");
-                      const ss = String(seconds % 60).padStart(2, "0");
-                      return (
-                        <div className="mt-3 rounded-md border border-primary/40 bg-primary/5 p-3">
-                          <div className="mb-3 flex items-center justify-between">
-                            <p className="text-[11px] font-bold uppercase tracking-wider text-primary">
-                              Modo ao vivo · etapa {liveStep + 1} de {playbook.length} · {TAG_LABEL[tag]}
-                            </p>
-                            <div className="flex items-center gap-1">
-                              <button
-                                onClick={() => setTimerOn((v) => !v)}
-                                className={`rounded px-2 py-0.5 font-mono text-[11px] ${timerOn ? "bg-rose-500/20 text-rose-700 dark:text-rose-300" : "border border-border hover:bg-muted"}`}
-                                title="Iniciar/pausar cronômetro"
-                              >
-                                {timerOn ? "⏸" : "⏱"} {mm}:{ss}
-                              </button>
-                              <button
-                                onClick={() => { setSeconds(0); setTimerOn(false); }}
-                                className="rounded border border-border px-1.5 py-0.5 text-[11px] hover:bg-muted"
-                                title="Resetar cronômetro"
-                              >↺</button>
-                            </div>
-                          </div>
-
-                          <div className="rounded-md bg-background/70 p-4">
-                            <span
-                              className={`mr-2 rounded px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider ${
-                                cur.role === "professor"
-                                  ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-400"
-                                  : cur.role === "pergunta-socratica"
-                                  ? "bg-violet-500/15 text-violet-700 dark:text-violet-400"
-                                  : "bg-amber-500/15 text-amber-700 dark:text-amber-400"
-                              }`}
-                            >
-                              {cur.role === "professor" ? "professor" : cur.role === "pergunta-socratica" ? "pergunte" : "aluno (esperado)"}
-                            </span>
-                            <p className="mt-2 text-base leading-relaxed">{cur.text}</p>
-                          </div>
-
-                          <div className="mt-3 flex items-center justify-between gap-2">
-                            <button
-                              disabled={liveStep === 0}
-                              onClick={() => setLiveStep((s) => Math.max(0, s - 1))}
-                              className="rounded-md border border-border px-3 py-1 text-xs hover:bg-muted disabled:opacity-40"
-                            >
-                              ← Voltar
-                            </button>
-                            <div className="flex h-1.5 flex-1 overflow-hidden rounded-full bg-muted">
-                              <div className="bg-primary transition-all" style={{ width: `${((liveStep + 1) / playbook.length) * 100}%` }} />
-                            </div>
-                            <button
-                              disabled={liveStep >= playbook.length - 1}
-                              onClick={() => setLiveStep((s) => Math.min(playbook.length - 1, s + 1))}
-                              className="rounded-md bg-primary px-3 py-1 text-xs font-medium text-primary-foreground hover:opacity-90 disabled:opacity-40"
-                            >
-                              Próxima →
-                            </button>
-                          </div>
-
-                          <details className="mt-3">
-                            <summary className="cursor-pointer text-[11px] font-medium text-muted-foreground hover:underline">
-                              Ver roteiro completo (todas as etapas)
-                            </summary>
-                            <ol className="mt-2 space-y-1.5">
-                              {playbook.map((turn, ti) => (
-                                <li
-                                  key={ti}
-                                  className={`flex gap-2 text-xs ${ti === liveStep ? "font-semibold text-foreground" : "text-muted-foreground"}`}
+                    {isDebating &&
+                      (() => {
+                        const playbook = SOCRATIC_PLAYBOOK[tag];
+                        const cur = playbook[Math.min(liveStep, playbook.length - 1)];
+                        const mm = String(Math.floor(seconds / 60)).padStart(2, "0");
+                        const ss = String(seconds % 60).padStart(2, "0");
+                        return (
+                          <div className="mt-3 rounded-md border border-primary/40 bg-primary/5 p-3">
+                            <div className="mb-3 flex items-center justify-between">
+                              <p className="text-[11px] font-bold uppercase tracking-wider text-primary">
+                                Modo ao vivo · etapa {liveStep + 1} de {playbook.length} ·{" "}
+                                {TAG_LABEL[tag]}
+                              </p>
+                              <div className="flex items-center gap-1">
+                                <button
+                                  onClick={() => setTimerOn((v) => !v)}
+                                  className={`rounded px-2 py-0.5 font-mono text-[11px] ${timerOn ? "bg-rose-500/20 text-rose-700 dark:text-rose-300" : "border border-border hover:bg-muted"}`}
+                                  title="Iniciar/pausar cronômetro"
                                 >
-                                  <span className="font-mono">{ti + 1}.</span>
-                                  <span>{turn.text}</span>
-                                </li>
-                              ))}
-                            </ol>
-                          </details>
-                        </div>
-                      );
-                    })()}
+                                  {timerOn ? "⏸" : "⏱"} {mm}:{ss}
+                                </button>
+                                <button
+                                  onClick={() => {
+                                    setSeconds(0);
+                                    setTimerOn(false);
+                                  }}
+                                  className="rounded border border-border px-1.5 py-0.5 text-[11px] hover:bg-muted"
+                                  title="Resetar cronômetro"
+                                >
+                                  ↺
+                                </button>
+                              </div>
+                            </div>
+
+                            <div className="rounded-md bg-background/70 p-4">
+                              <span
+                                className={`mr-2 rounded px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider ${
+                                  cur.role === "professor"
+                                    ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-400"
+                                    : cur.role === "pergunta-socratica"
+                                      ? "bg-violet-500/15 text-violet-700 dark:text-violet-400"
+                                      : "bg-amber-500/15 text-amber-700 dark:text-amber-400"
+                                }`}
+                              >
+                                {cur.role === "professor"
+                                  ? "professor"
+                                  : cur.role === "pergunta-socratica"
+                                    ? "pergunte"
+                                    : "aluno (esperado)"}
+                              </span>
+                              <p className="mt-2 text-base leading-relaxed">{cur.text}</p>
+                            </div>
+
+                            <div className="mt-3 flex items-center justify-between gap-2">
+                              <button
+                                disabled={liveStep === 0}
+                                onClick={() => setLiveStep((s) => Math.max(0, s - 1))}
+                                className="rounded-md border border-border px-3 py-1 text-xs hover:bg-muted disabled:opacity-40"
+                              >
+                                ← Voltar
+                              </button>
+                              <div className="flex h-1.5 flex-1 overflow-hidden rounded-full bg-muted">
+                                <div
+                                  className="bg-primary transition-all"
+                                  style={{ width: `${((liveStep + 1) / playbook.length) * 100}%` }}
+                                />
+                              </div>
+                              <button
+                                disabled={liveStep >= playbook.length - 1}
+                                onClick={() =>
+                                  setLiveStep((s) => Math.min(playbook.length - 1, s + 1))
+                                }
+                                className="rounded-md bg-primary px-3 py-1 text-xs font-medium text-primary-foreground hover:opacity-90 disabled:opacity-40"
+                              >
+                                Próxima →
+                              </button>
+                            </div>
+
+                            <details className="mt-3">
+                              <summary className="cursor-pointer text-[11px] font-medium text-muted-foreground hover:underline">
+                                Ver roteiro completo (todas as etapas)
+                              </summary>
+                              <ol className="mt-2 space-y-1.5">
+                                {playbook.map((turn, ti) => (
+                                  <li
+                                    key={ti}
+                                    className={`flex gap-2 text-xs ${ti === liveStep ? "font-semibold text-foreground" : "text-muted-foreground"}`}
+                                  >
+                                    <span className="font-mono">{ti + 1}.</span>
+                                    <span>{turn.text}</span>
+                                  </li>
+                                ))}
+                              </ol>
+                            </details>
+                          </div>
+                        );
+                      })()}
                   </div>
                 );
               })}
@@ -642,7 +751,9 @@ export function CriticalThinkingLab() {
 
           {/* Provocações */}
           <section className="rounded-xl border border-border bg-card p-5">
-            <h3 className="mb-3 text-xs font-bold uppercase tracking-widest text-muted-foreground">Provocações para destravar o pensamento</h3>
+            <h3 className="mb-3 text-xs font-bold uppercase tracking-widest text-muted-foreground">
+              Provocações para destravar o pensamento
+            </h3>
             <ul className="space-y-2">
               {active.provocations.map((p, i) => (
                 <li key={i} className="flex gap-3 text-sm">
@@ -657,10 +768,14 @@ export function CriticalThinkingLab() {
           <section className="rounded-xl border border-border bg-card p-5">
             <div className="mb-3 flex items-center justify-between">
               <h3 className="text-xs font-bold uppercase tracking-widest text-muted-foreground">
-                Roteiro: Passo {Math.min(prog.stepIdx + 1, active.steps.length)} de {active.steps.length}
+                Roteiro: Passo {Math.min(prog.stepIdx + 1, active.steps.length)} de{" "}
+                {active.steps.length}
               </h3>
               <div className="flex h-1.5 w-32 overflow-hidden rounded-full bg-muted">
-                <div className="bg-primary transition-all" style={{ width: `${(prog.stepIdx / active.steps.length) * 100}%` }} />
+                <div
+                  className="bg-primary transition-all"
+                  style={{ width: `${(prog.stepIdx / active.steps.length) * 100}%` }}
+                />
               </div>
             </div>
 
@@ -669,9 +784,14 @@ export function CriticalThinkingLab() {
                 const isCurrent = i === prog.stepIdx;
                 const isDone = i < prog.stepIdx;
                 return (
-                  <div key={i} className={`rounded-lg border p-3 transition ${isCurrent ? "border-primary bg-primary/5" : isDone ? "border-border bg-muted/30 opacity-70" : "border-border opacity-50"}`}>
+                  <div
+                    key={i}
+                    className={`rounded-lg border p-3 transition ${isCurrent ? "border-primary bg-primary/5" : isDone ? "border-border bg-muted/30 opacity-70" : "border-border opacity-50"}`}
+                  >
                     <div className="flex items-start gap-3">
-                      <span className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-xs font-bold ${isDone ? "bg-emerald-500 text-white" : isCurrent ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground"}`}>
+                      <span
+                        className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-xs font-bold ${isDone ? "bg-emerald-500 text-white" : isCurrent ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground"}`}
+                      >
                         {isDone ? "✓" : i + 1}
                       </span>
                       <div className="flex-1">
@@ -679,7 +799,9 @@ export function CriticalThinkingLab() {
                         <p className="mt-1 text-sm text-muted-foreground">{s.prompt}</p>
                         {isCurrent && s.hint && (
                           <details className="mt-2">
-                            <summary className="cursor-pointer text-xs font-medium text-primary hover:underline">Ver dica</summary>
+                            <summary className="cursor-pointer text-xs font-medium text-primary hover:underline">
+                              Ver dica
+                            </summary>
                             <p className="mt-1 text-xs text-muted-foreground">{s.hint}</p>
                           </details>
                         )}
@@ -691,10 +813,18 @@ export function CriticalThinkingLab() {
             </div>
 
             <div className="mt-4 flex gap-2">
-              <button disabled={prog.stepIdx === 0} onClick={() => updateProg(active.id, { stepIdx: Math.max(0, prog.stepIdx - 1) })} className="rounded-md border border-border px-3 py-1.5 text-sm hover:bg-muted disabled:opacity-40">
+              <button
+                disabled={prog.stepIdx === 0}
+                onClick={() => updateProg(active.id, { stepIdx: Math.max(0, prog.stepIdx - 1) })}
+                className="rounded-md border border-border px-3 py-1.5 text-sm hover:bg-muted disabled:opacity-40"
+              >
                 Anterior
               </button>
-              <button disabled={prog.stepIdx >= active.steps.length} onClick={() => updateProg(active.id, { stepIdx: prog.stepIdx + 1 })} className="rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground hover:opacity-90 disabled:opacity-40">
+              <button
+                disabled={prog.stepIdx >= active.steps.length}
+                onClick={() => updateProg(active.id, { stepIdx: prog.stepIdx + 1 })}
+                className="rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground hover:opacity-90 disabled:opacity-40"
+              >
                 Próximo passo
               </button>
             </div>
@@ -702,7 +832,9 @@ export function CriticalThinkingLab() {
 
           {/* Anotações */}
           <section className="rounded-xl border border-border bg-card p-5">
-            <h3 className="mb-2 text-xs font-bold uppercase tracking-widest text-muted-foreground">Suas anotações (rascunho do raciocínio)</h3>
+            <h3 className="mb-2 text-xs font-bold uppercase tracking-widest text-muted-foreground">
+              Suas anotações (rascunho do raciocínio)
+            </h3>
             <textarea
               value={prog.notes}
               onChange={(e) => updateProg(active.id, { notes: e.target.value })}
@@ -715,32 +847,58 @@ export function CriticalThinkingLab() {
           {/* Premissas e decisões */}
           <section className="grid gap-4 sm:grid-cols-2">
             <div className="rounded-xl border border-border bg-card p-5">
-              <h3 className="mb-2 text-xs font-bold uppercase tracking-widest text-muted-foreground">Premissas dadas</h3>
+              <h3 className="mb-2 text-xs font-bold uppercase tracking-widest text-muted-foreground">
+                Premissas dadas
+              </h3>
               <ul className="space-y-1 text-sm">
-                {active.premises.map((p, i) => (<li key={i} className="flex gap-2"><span className="text-primary">•</span>{p}</li>))}
+                {active.premises.map((p, i) => (
+                  <li key={i} className="flex gap-2">
+                    <span className="text-primary">•</span>
+                    {p}
+                  </li>
+                ))}
               </ul>
             </div>
             <div className="rounded-xl border border-border bg-card p-5">
-              <h3 className="mb-2 text-xs font-bold uppercase tracking-widest text-muted-foreground">Decisões esperadas</h3>
+              <h3 className="mb-2 text-xs font-bold uppercase tracking-widest text-muted-foreground">
+                Decisões esperadas
+              </h3>
               <ul className="space-y-1 text-sm font-mono">
-                {active.expectedDecisions.map((d, i) => (<li key={i} className="flex gap-2"><span className="text-primary">◇</span>{d}</li>))}
+                {active.expectedDecisions.map((d, i) => (
+                  <li key={i} className="flex gap-2">
+                    <span className="text-primary">◇</span>
+                    {d}
+                  </li>
+                ))}
               </ul>
             </div>
           </section>
 
           {/* Armadilhas */}
           <section className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-5">
-            <h3 className="mb-2 text-xs font-bold uppercase tracking-widest text-amber-700 dark:text-amber-400">Armadilhas comuns</h3>
+            <h3 className="mb-2 text-xs font-bold uppercase tracking-widest text-amber-700 dark:text-amber-400">
+              Armadilhas comuns
+            </h3>
             <ul className="space-y-1 text-sm">
-              {active.pitfalls.map((p, i) => (<li key={i} className="flex gap-2"><span>⚠️</span>{p}</li>))}
+              {active.pitfalls.map((p, i) => (
+                <li key={i} className="flex gap-2">
+                  <span>⚠️</span>
+                  {p}
+                </li>
+              ))}
             </ul>
           </section>
 
           {/* Solução */}
           <section className="rounded-xl border border-border bg-card p-5">
             <div className="mb-3 flex items-center justify-between">
-              <h3 className="text-xs font-bold uppercase tracking-widest text-muted-foreground">Fluxo de referência</h3>
-              <button onClick={() => updateProg(active.id, { revealed: !prog.revealed })} className="rounded-md border border-border px-3 py-1 text-xs hover:bg-muted">
+              <h3 className="text-xs font-bold uppercase tracking-widest text-muted-foreground">
+                Fluxo de referência
+              </h3>
+              <button
+                onClick={() => updateProg(active.id, { revealed: !prog.revealed })}
+                className="rounded-md border border-border px-3 py-1 text-xs hover:bg-muted"
+              >
                 {prog.revealed ? "Ocultar" : "Revelar"}
               </button>
             </div>
@@ -748,12 +906,18 @@ export function CriticalThinkingLab() {
               <ol className="space-y-1 rounded-md bg-muted/50 p-4 font-mono text-xs">
                 {active.referenceFlow.map((line, i) => (
                   <li key={i} className="leading-relaxed">
-                    <span className="mr-2 text-muted-foreground">{String(i + 1).padStart(2, "0")}.</span>{line}
+                    <span className="mr-2 text-muted-foreground">
+                      {String(i + 1).padStart(2, "0")}.
+                    </span>
+                    {line}
                   </li>
                 ))}
               </ol>
             ) : (
-              <p className="text-sm italic text-muted-foreground">Tente esboçar o fluxo no editor antes de revelar a referência. O processo de errar e ajustar é parte do aprendizado.</p>
+              <p className="text-sm italic text-muted-foreground">
+                Tente esboçar o fluxo no editor antes de revelar a referência. O processo de errar e
+                ajustar é parte do aprendizado.
+              </p>
             )}
           </section>
 
@@ -761,7 +925,10 @@ export function CriticalThinkingLab() {
           <section className="flex items-center justify-between rounded-xl border border-border bg-card p-5">
             <div>
               <p className="text-sm font-semibold">Pronto para o próximo desafio?</p>
-              <p className="text-xs text-muted-foreground">Marque como concluído quando tiver desenhado o fluxo no editor e comparado com a referência.</p>
+              <p className="text-xs text-muted-foreground">
+                Marque como concluído quando tiver desenhado o fluxo no editor e comparado com a
+                referência.
+              </p>
             </div>
             <button
               onClick={() => updateProg(active.id, { done: !prog.done })}

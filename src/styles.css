@@ -39,6 +39,7 @@
 }
 
 :root {
+  color-scheme: light;
   --radius: 0.625rem;
   --background: oklch(0.98 0.01 95);
   --foreground: oklch(0.18 0.03 260);
@@ -69,35 +70,38 @@
 }
 
 .dark {
-  --background: oklch(0.18 0.03 260);
-  --foreground: oklch(0.98 0.01 95);
-  --card: oklch(0.22 0.03 260);
-  --card-foreground: oklch(0.98 0.01 95);
-  --popover: oklch(0.22 0.03 260);
-  --popover-foreground: oklch(0.98 0.01 95);
-  --primary: oklch(0.78 0.18 75);
-  --primary-foreground: oklch(0.18 0.03 260);
-  --secondary: oklch(0.28 0.03 260);
-  --secondary-foreground: oklch(0.98 0.01 95);
-  --muted: oklch(0.28 0.03 260);
-  --muted-foreground: oklch(0.7 0.03 260);
-  --accent: oklch(0.78 0.18 75);
-  --accent-foreground: oklch(0.18 0.03 260);
-  --destructive: oklch(0.6 0.22 27);
-  --destructive-foreground: oklch(0.98 0.01 95);
-  --border: oklch(0.32 0.03 260);
-  --input: oklch(0.32 0.03 260);
-  --ring: oklch(0.78 0.18 75);
-  --canvas: oklch(0.22 0.03 260);
-  --canvas-grid: oklch(0.3 0.03 260);
-  --node: oklch(0.28 0.03 260);
-  --node-stroke: oklch(0.78 0.18 75);
-  --node-selected: oklch(0.85 0.2 75);
-  --edge: oklch(0.78 0.18 75);
+  color-scheme: dark;
+  --background: #282a36;
+  --foreground: #f8f8f2;
+  --card: #2f3140;
+  --card-foreground: #f8f8f2;
+  --popover: #2f3140;
+  --popover-foreground: #f8f8f2;
+  --primary: #bd93f9;
+  --primary-foreground: #282a36;
+  --secondary: #44475a;
+  --secondary-foreground: #f8f8f2;
+  --muted: #3b3d4d;
+  --muted-foreground: #b8bedc;
+  --accent: #a6e22e;
+  --accent-foreground: #272822;
+  --destructive: #ff5555;
+  --destructive-foreground: #282a36;
+  --border: #44475a;
+  --input: #44475a;
+  --ring: #ff79c6;
+  --canvas: #272822;
+  --canvas-grid: #3e3d32;
+  --node: #2f3140;
+  --node-stroke: #8be9fd;
+  --node-selected: #a6e22e;
+  --edge: #f8f8f2;
 }
 
 @layer base {
-  * { border-color: var(--color-border); }
+  * {
+    border-color: var(--color-border);
+  }
   body {
     background-color: var(--color-background);
     color: var(--color-foreground);
@@ -110,4 +114,13 @@
     linear-gradient(to right, var(--color-canvas-grid) 1px, transparent 1px),
     linear-gradient(to bottom, var(--color-canvas-grid) 1px, transparent 1px);
   background-size: 24px 24px;
+}
+
+.fluxolab-reduce-motion *,
+.fluxolab-reduce-motion *::before,
+.fluxolab-reduce-motion *::after {
+  animation-duration: 0.001ms !important;
+  animation-iteration-count: 1 !important;
+  scroll-behavior: auto !important;
+  transition-duration: 0.001ms !important;
 }
