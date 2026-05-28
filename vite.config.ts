@@ -5,19 +5,12 @@ import { defineConfig } from "vite";
 import tsConfigPaths from "vite-tsconfig-paths";
 
 export default defineConfig({
-  plugins: [
-    tanstackStart({
-      prerender: {
-        enabled: true,
-        crawlLinks: true, // Garante que ele vai mapear e gerar o HTML de todas as suas rotas internas
-      },
-    }),
-    viteReact(),
-    tailwindcss(),
-    tsConfigPaths(),
-  ],
+  // Define a rota base apenas quando estiver gerando o build de produção
+  base: process.env.NODE_ENV === "production" ? "/fluxolab/" : "/",
+  plugins: [tanstackStart(), viteReact(), tailwindcss(), tsConfigPaths()],
+  build: {
+    // Garante que a saída seja uma pasta limpa chamada 'dist' com o index.html na raiz
+    outDir: "dist",
+    emptyOutDir: true,
+  },
 });
-
-// export default defineConfig({
-//   plugins: [tanstackStart(), viteReact(), tailwindcss(), tsConfigPaths()],
-// });
