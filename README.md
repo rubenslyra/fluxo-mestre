@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # FluxoLab
 
 Criador visual de fluxogramas ISO 5807 para aulas de lógica, algoritmos e engenharia de software.
@@ -87,3 +88,6 @@ Consulte [CHANGELOG.md](CHANGELOG.md).
 ## Segurança
 
 Consulte [SECURITY.md](SECURITY.md).
+=======
+# fluxo-mestre
+>>>>>>> 4d653391b52e446b6c147674385ab746edaaabe7
