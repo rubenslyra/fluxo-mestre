@@ -1,0 +1,11 @@
+services:
+  fluxolab:
+    build:
+      context: .
+    image: fluxolab:local
+    container_name: fluxolab
+    restart: unless-stopped
+    ports:
+      - "8088:80"
+    environment:
+      NODE_ENV: production

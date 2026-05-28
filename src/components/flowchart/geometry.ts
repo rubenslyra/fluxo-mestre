@@ -31,7 +31,10 @@ function chooseSides(from: FlowNode, to: FlowNode): { fs: Side; ts: Side } {
 }
 
 // Orthogonal path with rounded corners
-export function edgePath(from: FlowNode, to: FlowNode): { d: string; mid: { x: number; y: number } } {
+export function edgePath(
+  from: FlowNode,
+  to: FlowNode,
+): { d: string; mid: { x: number; y: number } } {
   const { fs, ts } = chooseSides(from, to);
   const a = sideAnchor(from, fs);
   const b = sideAnchor(to, ts);

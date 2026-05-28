@@ -13,7 +13,7 @@ export type ChallengeStep = {
 
 export type StudentObjection = {
   question: string; // a pergunta crítica do aluno
-  answer: string;   // resposta do professor / justificativa
+  answer: string; // resposta do professor / justificativa
 };
 
 export type Challenge = {
@@ -30,10 +30,10 @@ export type Challenge = {
   pitfalls: string[];
   logicConcept: string;
   // NOVOS — para responder o aluno crítico ("por que estudar isso?")
-  whyItMatters: string;            // justificativa pedagógica em 1-2 frases
+  whyItMatters: string; // justificativa pedagógica em 1-2 frases
   realWorldApplications: string[]; // 3-5 aplicações concretas no mercado
   studentObjections: StudentObjection[]; // perguntas céticas + respostas
-  transferableSkill: string;       // a habilidade transferível além do exercício
+  transferableSkill: string; // a habilidade transferível além do exercício
 };
 
 export const CHALLENGES: Challenge[] = [
@@ -43,8 +43,7 @@ export const CHALLENGES: Challenge[] = [
     category: "Decisão simples",
     difficulty: "iniciante",
     logicConcept: "Modus Ponens — Se P → Q",
-    scenario:
-      "Um aluno entrega um número inteiro N. O sistema deve dizer se ele é par ou ímpar.",
+    scenario: "Um aluno entrega um número inteiro N. O sistema deve dizer se ele é par ou ímpar.",
     whyItMatters:
       "Não é sobre 'par/ímpar'. É o menor exercício possível para você dominar a estrutura SE → ENTÃO → SENÃO, que é a base de QUALQUER decisão em software.",
     realWorldApplications: [
@@ -74,10 +73,24 @@ export const CHALLENGES: Challenge[] = [
       "Existe algum N para o qual a sua regra falha (zero, negativos)?",
     ],
     steps: [
-      { title: "Entenda o problema", prompt: "Reescreva o enunciado com suas palavras em uma única frase." },
-      { title: "Liste o que entra e o que sai", prompt: "Qual é a entrada? Qual é a saída esperada para cada caso?" },
-      { title: "Encontre a pergunta-chave", prompt: "Qual única pergunta booleana resolve o problema?", hint: "Pense em N % 2." },
-      { title: "Esboce o fluxo", prompt: "Desenhe: Início → Ler N → Decisão → 2 saídas → Fim.", hint: "Use o símbolo de Decisão (losango) com duas setas rotuladas." },
+      {
+        title: "Entenda o problema",
+        prompt: "Reescreva o enunciado com suas palavras em uma única frase.",
+      },
+      {
+        title: "Liste o que entra e o que sai",
+        prompt: "Qual é a entrada? Qual é a saída esperada para cada caso?",
+      },
+      {
+        title: "Encontre a pergunta-chave",
+        prompt: "Qual única pergunta booleana resolve o problema?",
+        hint: "Pense em N % 2.",
+      },
+      {
+        title: "Esboce o fluxo",
+        prompt: "Desenhe: Início → Ler N → Decisão → 2 saídas → Fim.",
+        hint: "Use o símbolo de Decisão (losango) com duas setas rotuladas.",
+      },
     ],
     premises: ["N é um número inteiro fornecido pelo usuário"],
     expectedDecisions: ["N % 2 == 0 ?"],
@@ -132,9 +145,19 @@ export const CHALLENGES: Challenge[] = [
       "A ordem das verificações importa? Por quê?",
     ],
     steps: [
-      { title: "Liste as premissas", prompt: "Quais condições precisam ser verdadeiras simultaneamente?" },
-      { title: "Construa a tabela-verdade", prompt: "Monte mentalmente as 4 combinações possíveis.", hint: "Apenas 1 das 4 libera o acesso." },
-      { title: "Modele a decisão", prompt: "Uma decisão composta ou duas decisões em sequência? Justifique." },
+      {
+        title: "Liste as premissas",
+        prompt: "Quais condições precisam ser verdadeiras simultaneamente?",
+      },
+      {
+        title: "Construa a tabela-verdade",
+        prompt: "Monte mentalmente as 4 combinações possíveis.",
+        hint: "Apenas 1 das 4 libera o acesso.",
+      },
+      {
+        title: "Modele a decisão",
+        prompt: "Uma decisão composta ou duas decisões em sequência? Justifique.",
+      },
       { title: "Esboce o fluxo", prompt: "Desenhe e rotule as duas saídas claramente." },
     ],
     premises: [
@@ -196,8 +219,14 @@ export const CHALLENGES: Challenge[] = [
     steps: [
       { title: "Decomponha a frase", prompt: "Sublinhe cada condição independente do enunciado." },
       { title: "Liste as entradas", prompt: "Quais dados do cliente o sistema precisa receber?" },
-      { title: "Modele a decisão", prompt: "Uma decisão única com E lógico ou um encadeamento de decisões?" },
-      { title: "Defina os caminhos", prompt: "O que acontece nos dois caminhos? Algum deles tem subpassos?" },
+      {
+        title: "Modele a decisão",
+        prompt: "Uma decisão única com E lógico ou um encadeamento de decisões?",
+      },
+      {
+        title: "Defina os caminhos",
+        prompt: "O que acontece nos dois caminhos? Algum deles tem subpassos?",
+      },
     ],
     premises: [
       "cliente.Premium (bool)",
@@ -258,8 +287,14 @@ export const CHALLENGES: Challenge[] = [
     ],
     steps: [
       { title: "Identifique etapas", prompt: "Separe entrada, processamento e decisão." },
-      { title: "Encadeie decisões", prompt: "Como duas decisões consecutivas podem cobrir três faixas?" },
-      { title: "Confira a exaustividade", prompt: "Toda média possível cai em exatamente um caminho?" },
+      {
+        title: "Encadeie decisões",
+        prompt: "Como duas decisões consecutivas podem cobrir três faixas?",
+      },
+      {
+        title: "Confira a exaustividade",
+        prompt: "Toda média possível cai em exatamente um caminho?",
+      },
     ],
     premises: ["nota1, nota2 são números reais entre 0 e 10"],
     expectedDecisions: ["media >= 7", "media >= 5"],
@@ -284,8 +319,7 @@ export const CHALLENGES: Challenge[] = [
     category: "Repetição",
     difficulty: "intermediário",
     logicConcept: "Invariante de loop — preparação e condição de parada",
-    scenario:
-      "Receba N e exiba a soma de todos os inteiros de 1 até N usando repetição.",
+    scenario: "Receba N e exiba a soma de todos os inteiros de 1 até N usando repetição.",
     whyItMatters:
       "Loop com acumulador é o esqueleto de toda agregação: somar, contar, médias, máximos. Quem não desenha a 'volta da seta', não enxerga loop infinito antes de rodar — e trava o servidor em produção.",
     realWorldApplications: [
@@ -315,9 +349,18 @@ export const CHALLENGES: Challenge[] = [
       "Onde, no fluxograma, fica o retorno da seta para 'recomeçar'?",
     ],
     steps: [
-      { title: "Identifique variáveis de estado", prompt: "Quais valores você precisa lembrar entre as iterações?" },
-      { title: "Defina inicialização", prompt: "Use um símbolo de Preparação para os valores iniciais." },
-      { title: "Modele a condição de parada", prompt: "Decisão dentro do loop: continuar ou sair?" },
+      {
+        title: "Identifique variáveis de estado",
+        prompt: "Quais valores você precisa lembrar entre as iterações?",
+      },
+      {
+        title: "Defina inicialização",
+        prompt: "Use um símbolo de Preparação para os valores iniciais.",
+      },
+      {
+        title: "Modele a condição de parada",
+        prompt: "Decisão dentro do loop: continuar ou sair?",
+      },
     ],
     premises: ["N é inteiro >= 0"],
     expectedDecisions: ["i <= N ?"],
@@ -354,7 +397,8 @@ export const CHALLENGES: Challenge[] = [
     ],
     studentObjections: [
       {
-        question: "Por motivo de segurança, não é melhor mensagem genérica pra não dar dica pro fraudador?",
+        question:
+          "Por motivo de segurança, não é melhor mensagem genérica pra não dar dica pro fraudador?",
         answer:
           "Pergunta excelente — e a resposta é 'depende do contexto'. Em login, sim (não revelar se foi senha ou usuário). Em pagamento próprio do cliente, NÃO — ele PRECISA saber se é saldo, bloqueio ou limite. Aprender a separar os motivos te dá flexibilidade pra escolher o que expor.",
       },
@@ -367,9 +411,18 @@ export const CHALLENGES: Challenge[] = [
       "Qual conceito da lógica formal você está aplicando ao deduzir 'qual premissa falhou'?",
     ],
     steps: [
-      { title: "Liste as premissas", prompt: "Quais condições precisam ser verdadeiras para aprovar?" },
-      { title: "Pense no caminho do erro", prompt: "Como diferenciar 'saldo insuficiente' de 'cartão bloqueado'?" },
-      { title: "Modele as decisões", prompt: "Uma sequência de decisões revela o motivo. Esboce-a." },
+      {
+        title: "Liste as premissas",
+        prompt: "Quais condições precisam ser verdadeiras para aprovar?",
+      },
+      {
+        title: "Pense no caminho do erro",
+        prompt: "Como diferenciar 'saldo insuficiente' de 'cartão bloqueado'?",
+      },
+      {
+        title: "Modele as decisões",
+        prompt: "Uma sequência de decisões revela o motivo. Esboce-a.",
+      },
     ],
     premises: ["cliente.Saldo (decimal)", "cartao.Bloqueado (bool)", "valorCompra (decimal)"],
     expectedDecisions: ["cartao.Bloqueado?", "cliente.Saldo >= valorCompra?"],
@@ -420,8 +473,14 @@ export const CHALLENGES: Challenge[] = [
     ],
     steps: [
       { title: "Mapeie os estados", prompt: "Liste todos os estados possíveis da fila." },
-      { title: "Encadeie decisões", prompt: "Qual a ordem mais eficiente de verificar cada estado?" },
-      { title: "Esboce o fluxo", prompt: "Use Decisão para cada bifurcação e Sub-rotina para 'Chamar cliente'." },
+      {
+        title: "Encadeie decisões",
+        prompt: "Qual a ordem mais eficiente de verificar cada estado?",
+      },
+      {
+        title: "Esboce o fluxo",
+        prompt: "Use Decisão para cada bifurcação e Sub-rotina para 'Chamar cliente'.",
+      },
     ],
     premises: ["fila.Quantidade (int)", "fila.TemPrioritario (bool)"],
     expectedDecisions: ["fila vazia?", "tem prioritário?"],
@@ -475,11 +534,26 @@ export const CHALLENGES: Challenge[] = [
       "Se você usar uma única decisão gigante, qual problema didático isso causa?",
     ],
     steps: [
-      { title: "Separe obrigatórias de alternativas", prompt: "Marque quais condições estão ligadas por E e quais por OU." },
-      { title: "Modele cada validação", prompt: "Uma decisão por regra ou agrupar? Qual a vantagem didática de cada abordagem?" },
-      { title: "Defina o caminho do erro", prompt: "O fluxo deve dizer qual campo falhou ou só 'inválido'?" },
+      {
+        title: "Separe obrigatórias de alternativas",
+        prompt: "Marque quais condições estão ligadas por E e quais por OU.",
+      },
+      {
+        title: "Modele cada validação",
+        prompt: "Uma decisão por regra ou agrupar? Qual a vantagem didática de cada abordagem?",
+      },
+      {
+        title: "Defina o caminho do erro",
+        prompt: "O fluxo deve dizer qual campo falhou ou só 'inválido'?",
+      },
     ],
-    premises: ["nome (string)", "email (string)", "senha (string)", "telefone (string)", "cpf (string)"],
+    premises: [
+      "nome (string)",
+      "email (string)",
+      "senha (string)",
+      "telefone (string)",
+      "cpf (string)",
+    ],
     expectedDecisions: ["nome preenchido?", "e-mail tem @?", "senha >= 8?", "telefone OU cpf?"],
     referenceFlow: [
       "Início",
