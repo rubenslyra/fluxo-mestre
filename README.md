@@ -42,6 +42,25 @@ Build de produção com base `/fluxolab/`:
 bun run build:fluxolab
 ```
 
+Build estático para Hostinger, sem Node no servidor:
+
+```bash
+bun run build:hostinger
+```
+
+Esse comando gera `release/fluxolab-hostinger.zip`. Envie o conteúdo do ZIP para
+`public_html/fluxolab/`. A pasta contém `index.html`, assets estáticos e um `.htaccess` para fallback
+de SPA em Apache/LiteSpeed.
+
+Se a URL pública correta for `/fluxlab/`, gere o pacote alternativo:
+
+```bash
+bun run build:hostinger:fluxlab
+```
+
+Nesse caso, o diretório no servidor também deve corresponder à URL, por exemplo
+`public_html/fluxlab/`, salvo se houver uma regra de alias no servidor.
+
 Execução via Docker:
 
 ```bash

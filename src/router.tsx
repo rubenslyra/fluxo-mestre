@@ -63,8 +63,7 @@ export const getRouter = () => {
   const router = createRouter({
     routeTree,
     context: {},
-    // 💡 Defina o caminho como string direta para o Vinxi não quebrar no build
-    basepath: "/fluxolab",
+    basepath: normalizeBasepath(import.meta.env.BASE_URL),
     scrollRestoration: true,
     defaultPreloadStaleTime: 0,
     defaultErrorComponent: DefaultErrorComponent,
