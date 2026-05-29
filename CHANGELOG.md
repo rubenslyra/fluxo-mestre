@@ -1,5 +1,27 @@
 # Notas de Versão
 
+## 0.1.1 - Publicação estática e limpeza pública
+
+Data: 2026-05-28
+
+### Adicionado
+
+- Build estático para hospedagem compartilhada sem Node no servidor.
+- Pacote de publicação em `release/fluxolab-hostinger.zip`.
+- SEO completo no `index.html` para GitHub Pages e compartilhamento social.
+- `manifest.webmanifest` para instalação como aplicação web progressiva.
+
+### Alterado
+
+- README passou a trazer instruções diretas para baixar, rodar localmente e publicar em hospedagem comum.
+- Documentação interna de análise, tarefas e releases foi removida do rastreio público.
+
+### Validação
+
+- `bun run build:hostinger`
+- `bunx tsc --noEmit`
+- `bun run lint`
+
 ## 0.1.0 - Release comunitária inicial
 
 Data: 2026-05-28

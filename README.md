@@ -1,8 +1,43 @@
 # FluxoLab
 
+<p align="center">
+  <img src="public/logo.png" alt="FluxoLab" width="240" />
+</p>
+
 Criador visual de fluxogramas ISO 5807 para aulas de lógica, algoritmos e engenharia de software.
 O projeto inclui editor interativo, desafios didáticos, validação do fluxo, exportação e geração de
 código por blueprints.
+
+## Como usar
+
+1. Acesse a versão publicada no GitHub Pages quando ela estiver no ar.
+2. Para baixar e rodar localmente, clone o repositório e execute:
+
+```bash
+bun install
+bun run dev
+```
+
+3. Para gerar um pacote estático de publicação:
+
+```bash
+bun run build:hostinger
+```
+
+4. Para publicação em subpasta diferente, use:
+
+```bash
+bun run build:hostinger:fluxlab
+```
+
+5. Se estiver usando hospedagem compartilhada sem Node, envie o conteúdo do ZIP gerado para a pasta
+   pública do site, por exemplo `public_html/fluxolab/`.
+
+## Download
+
+- Use a página de releases do GitHub para baixar o pacote pronto.
+- O pacote estático não requer Node no servidor.
+- A aplicação também funciona localmente no navegador com `bun run dev`.
 
 ## Origem
 
@@ -42,6 +77,25 @@ Build de produção com base `/fluxolab/`:
 bun run build:fluxolab
 ```
 
+Build estático para Hostinger, sem Node no servidor:
+
+```bash
+bun run build:hostinger
+```
+
+Esse comando gera `release/fluxolab-hostinger.zip`. Envie o conteúdo do ZIP para
+`public_html/fluxolab/`. A pasta contém `index.html`, assets estáticos e um `.htaccess` para fallback
+de SPA em Apache/LiteSpeed.
+
+Se a URL pública correta for `/fluxlab/`, gere o pacote alternativo:
+
+```bash
+bun run build:hostinger:fluxlab
+```
+
+Nesse caso, o diretório no servidor também deve corresponder à URL, por exemplo
+`public_html/fluxlab/`, salvo se houver uma regra de alias no servidor.
+
 Execução via Docker:
 
 ```bash
@@ -56,8 +110,8 @@ http://localhost:8088/fluxolab/
 
 ## Modo IA e chaves
 
-O FluxoLab funciona sem chave no modo local. O painel de configurações permite somar um provedor
-externo para uso local, laboratório ou gateway controlado pelo usuário.
+O FluxoLab funciona sem chave no modo local. O painel de configurações permite, se necessário, usar
+um provedor externo controlado pelo usuário para laboratório ou integrações próprias.
 
 Para publicação pública, não exponha chaves de API diretamente no frontend. Use um backend/proxy
 para guardar segredos e aplicar controle de uso. As opções de chave no navegador existem para

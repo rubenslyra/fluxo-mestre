@@ -10,7 +10,11 @@
     "dev": "vinxi dev",
     "build": "vite build",
     "build:fluxolab": "vite build --base=/fluxolab/",
+    "build:static": "vite build --config vite.static.config.ts",
+    "build:hostinger": "bun run build:static && powershell -NoProfile -ExecutionPolicy Bypass -File scripts/package-hostinger.ps1",
+    "build:hostinger:fluxlab": "cross-env FLUXOLAB_BASE_PATH=/fluxlab/ bun run build:static && powershell -NoProfile -ExecutionPolicy Bypass -File scripts/package-hostinger.ps1 -PackageName fluxlab-hostinger.zip -ServerPath public_html/fluxlab/",
     "build:dev": "vite build --mode development",
+    "test": "bun test",
     "preview": "vite preview",
     "lint": "eslint .",
     "format": "prettier --write ."

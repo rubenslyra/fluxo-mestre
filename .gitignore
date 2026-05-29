@@ -10,6 +10,7 @@ lerna-debug.log*
 node_modules
 dist
 dist-ssr
+release
 .output
 .vinxi
 .tanstack/**
@@ -26,6 +27,9 @@ dist-ssr
 # Wrangler / Cloudflare
 .wrangler/
 .dev.vars
+
+# Internal documentation not meant for distribution
+docs/repo-interno/
 
 # Editor directories and files
 .vscode/*
