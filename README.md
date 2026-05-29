@@ -10,7 +10,7 @@ código por blueprints.
 
 ## Como usar
 
-1. Acesse a versão publicada no GitHub Pages quando estiver disponível.
+1. Acesse a versão publicada no GitHub Pages quando ela estiver no ar.
 2. Para baixar e rodar localmente, clone o repositório e execute:
 
 ```bash
@@ -110,8 +110,8 @@ http://localhost:8088/fluxolab/
 
 ## Modo IA e chaves
 
-O FluxoLab funciona sem chave no modo local. O painel de configurações permite somar um provedor
-externo para uso local, laboratório ou gateway controlado pelo usuário.
+O FluxoLab funciona sem chave no modo local. O painel de configurações permite, se necessário, usar
+um provedor externo controlado pelo usuário para laboratório ou integrações próprias.
 
 Para publicação pública, não exponha chaves de API diretamente no frontend. Use um backend/proxy
 para guardar segredos e aplicar controle de uso. As opções de chave no navegador existem para
