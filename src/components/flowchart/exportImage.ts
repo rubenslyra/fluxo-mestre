@@ -1,4 +1,5 @@
 import { edgePath } from "./geometry";
+import { documentBounds } from "./flowModel";
 import { getShapePath } from "./symbols";
 import type { FlowDoc, FlowNode } from "./types";
 
@@ -50,16 +51,7 @@ function svgNodeLabel(node: FlowNode) {
 }
 
 function buildStandaloneSvg(doc: FlowDoc, _innerHtml: string) {
-  const xs = doc.nodes.map((n) => n.x - n.w / 2);
-  const ys = doc.nodes.map((n) => n.y - n.h / 2);
-  const xe = doc.nodes.map((n) => n.x + n.w / 2);
-  const ye = doc.nodes.map((n) => n.y + n.h / 2);
-  const minX = Math.min(...xs) - 40;
-  const minY = Math.min(...ys) - 40;
-  const maxX = Math.max(...xe) + 40;
-  const maxY = Math.max(...ye) + 40;
-  const w = maxX - minX;
-  const h = maxY - minY;
+  const { minX, minY, w, h } = documentBounds(doc.nodes);
   const nodeMap = new Map(doc.nodes.map((node) => [node.id, node]));
   // arrow marker definition (since we strip <defs> indirectly when only #world is used)
   const defs = `<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#222"/></marker></defs>`;
@@ -743,15 +735,7 @@ function paginateWithoutCuttingNodes(
 }
 
 function buildPdfPages(doc: FlowDoc, documentId: string, logo?: PdfImageAsset | null) {
-  const xs = doc.nodes.map((n) => n.x - n.w / 2);
-  const ys = doc.nodes.map((n) => n.y - n.h / 2);
-  const xe = doc.nodes.map((n) => n.x + n.w / 2);
-  const ye = doc.nodes.map((n) => n.y + n.h / 2);
-  const minX = Math.min(...xs) - 40;
-  const minY = Math.min(...ys) - 40;
-  const maxX = Math.max(...xe) + 40;
-  const maxY = Math.max(...ye) + 40;
-  const sourceWidth = maxX - minX;
+  const { minX, minY, maxY, w: sourceWidth } = documentBounds(doc.nodes);
 
   const pageWidth = 841.89;
   const pageHeight = 595.28;

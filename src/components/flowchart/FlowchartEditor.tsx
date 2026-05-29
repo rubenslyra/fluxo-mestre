@@ -8,6 +8,15 @@ import {
 import { SYMBOLS, type SymbolKind } from "./symbols";
 import { SymbolPreview, NodeShape } from "./NodeShape";
 import { edgePath } from "./geometry";
+import {
+  canConnectFlowNodes,
+  connectFlowNodes,
+  findTopNodeAtPoint,
+  moveNodesTo,
+  nodeIntersectsSelection,
+  normalizeSelectionBox,
+  type SelectionBox,
+} from "./flowModel";
 import type { FlowDoc, FlowNode } from "./types";
 import { AiGeneratorPanel } from "./AiGeneratorPanel";
 import { CodeGeneratorPanel } from "./CodeGeneratorPanel";
@@ -116,26 +125,7 @@ function normalizeDoc(value: unknown): FlowDoc {
 
 const EXPORT_PREFS_KEY = "flowchart-export-prefs-v1";
 type ExportFormat = "png" | "svg" | "pdf";
-type SelectionBox = { startX: number; startY: number; x: number; y: number };
-
-function normalizeSelectionBox(box: SelectionBox) {
-  const x = Math.min(box.startX, box.x);
-  const y = Math.min(box.startY, box.y);
-  const w = Math.abs(box.x - box.startX);
-  const h = Math.abs(box.y - box.startY);
-  return { x, y, w, h };
-}
-
-function nodeIntersectsSelection(
-  node: FlowNode,
-  rect: { x: number; y: number; w: number; h: number },
-) {
-  const left = node.x - node.w / 2;
-  const right = node.x + node.w / 2;
-  const top = node.y - node.h / 2;
-  const bottom = node.y + node.h / 2;
-  return rect.x <= right && rect.x + rect.w >= left && rect.y <= bottom && rect.y + rect.h >= top;
-}
+type PendingEdge = { from: string; x: number; y: number };
 
 function loadExportPrefs(): { format: ExportFormat; scale: number } {
   if (typeof window === "undefined") return { format: "png", scale: 2 };
@@ -163,9 +153,7 @@ export function FlowchartEditor() {
   const [selectedEdge, setSelectedEdge] = useState<string | null>(null);
   const [selectionBox, setSelectionBox] = useState<SelectionBox | null>(null);
   const [view, setView] = useState({ x: 0, y: 0, k: 1 });
-  const [pendingEdge, setPendingEdge] = useState<{ from: string; x: number; y: number } | null>(
-    null,
-  );
+  const [pendingEdge, setPendingEdge] = useState<PendingEdge | null>(null);
   const [aiOpen, setAiOpen] = useState(false);
   const [codeOpen, setCodeOpen] = useState(false);
   const [search, setSearch] = useState("");
@@ -217,6 +205,7 @@ export function FlowchartEditor() {
   } | null>(null);
   const panRef = useRef<{ x: number; y: number; vx: number; vy: number } | null>(null);
   const selectionBoxRef = useRef<SelectionBox | null>(null);
+  const pendingEdgeRef = useRef<PendingEdge | null>(null);
   const docRef = useRef(doc);
   const viewRef = useRef(view);
   docRef.current = doc;
@@ -334,6 +323,53 @@ export function FlowchartEditor() {
     };
   }, []);
 
+  const setActivePendingEdge = useCallback((edge: PendingEdge | null) => {
+    pendingEdgeRef.current = edge;
+    setPendingEdge(edge);
+  }, []);
+
+  const updatePendingEdgePoint = useCallback(
+    (clientX: number, clientY: number) => {
+      const pending = pendingEdgeRef.current;
+      if (!pending) return;
+      const w = screenToWorld(clientX, clientY);
+      setActivePendingEdge({ ...pending, x: w.x, y: w.y });
+    },
+    [screenToWorld, setActivePendingEdge],
+  );
+
+  const finishPendingEdgeOn = useCallback(
+    (toId: string) => {
+      const pending = pendingEdgeRef.current;
+      if (!pending) return;
+      if (canConnectFlowNodes(docRef.current, { from: pending.from, to: toId })) {
+        setDoc((d) => connectFlowNodes(d, { id: uid(), from: pending.from, to: toId }));
+      }
+      setActivePendingEdge(null);
+    },
+    [setDoc, setActivePendingEdge],
+  );
+
+  const finishPendingEdgeAt = useCallback(
+    (clientX?: number, clientY?: number) => {
+      const pending = pendingEdgeRef.current;
+      if (!pending) return;
+
+      if (typeof clientX === "number" && typeof clientY === "number") {
+        const target = findTopNodeAtPoint(docRef.current.nodes, screenToWorld(clientX, clientY), {
+          excludeId: pending.from,
+        });
+
+        if (target && canConnectFlowNodes(docRef.current, { from: pending.from, to: target.id })) {
+          setDoc((d) => connectFlowNodes(d, { id: uid(), from: pending.from, to: target.id }));
+        }
+      }
+
+      setActivePendingEdge(null);
+    },
+    [screenToWorld, setDoc, setActivePendingEdge],
+  );
+
   const addNode = (kind: SymbolKind) => {
     const def = SYMBOLS[kind];
     const rect = svgRef.current?.getBoundingClientRect();
@@ -358,14 +394,7 @@ export function FlowchartEditor() {
   }, []);
 
   const updateNodes = useCallback((positions: Array<{ id: string; x: number; y: number }>) => {
-    const byId = new Map(positions.map((position) => [position.id, position]));
-    setDocRaw((d) => ({
-      ...d,
-      nodes: d.nodes.map((node) => {
-        const position = byId.get(node.id);
-        return position ? { ...node, x: position.x, y: position.y } : node;
-      }),
-    }));
+    setDocRaw((d) => moveNodesTo(d, positions));
   }, []);
 
   const setActiveSelectionBox = useCallback((box: SelectionBox | null) => {
@@ -396,15 +425,7 @@ export function FlowchartEditor() {
     const rect = normalizeSelectionBox(box);
     if (Math.max(rect.w, rect.h) < 4) {
       const point = { x: box.x, y: box.y };
-      const node = [...docRef.current.nodes]
-        .reverse()
-        .find(
-          (node) =>
-            point.x >= node.x - node.w / 2 &&
-            point.x <= node.x + node.w / 2 &&
-            point.y >= node.y - node.h / 2 &&
-            point.y <= node.y + node.h / 2,
-        );
+      const node = findTopNodeAtPoint(docRef.current.nodes, point);
       return node ? [node] : [];
     }
     return docRef.current.nodes.filter((node) => nodeIntersectsSelection(node, rect));
@@ -470,24 +491,6 @@ export function FlowchartEditor() {
     };
   };
 
-  const handleMouseMove = (e: React.MouseEvent) => {
-    if (selectionBoxRef.current) {
-      updateSelectionBox(e.clientX, e.clientY);
-    } else if (dragRef.current) {
-      moveDraggedNode(e.clientX, e.clientY);
-    } else if (pendingEdge) {
-      const w = screenToWorld(e.clientX, e.clientY);
-      setPendingEdge({ ...pendingEdge, x: w.x, y: w.y });
-    } else if (panRef.current) {
-      const pan = panRef.current;
-      setView((v) => ({
-        ...v,
-        x: pan.vx + (e.clientX - pan.x),
-        y: pan.vy + (e.clientY - pan.y),
-      }));
-    }
-  };
-
   const moveDraggedNode = useCallback(
     (clientX: number, clientY: number) => {
       if (!dragRef.current) return;
@@ -518,11 +521,11 @@ export function FlowchartEditor() {
         finishSelectionBox(clientX, clientY);
         return;
       }
+      finishPendingEdgeAt(clientX, clientY);
       dragRef.current = null;
       panRef.current = null;
-      setPendingEdge(null);
     },
-    [finishSelectionBox],
+    [finishPendingEdgeAt, finishSelectionBox],
   );
 
   useEffect(() => {
@@ -531,7 +534,14 @@ export function FlowchartEditor() {
         updateSelectionBox(e.clientX, e.clientY);
         return;
       }
-      if (dragRef.current) moveDraggedNode(e.clientX, e.clientY);
+      if (dragRef.current) {
+        moveDraggedNode(e.clientX, e.clientY);
+        return;
+      }
+      if (pendingEdgeRef.current) {
+        updatePendingEdgePoint(e.clientX, e.clientY);
+        return;
+      }
       if (panRef.current) {
         const pan = panRef.current;
         setView((v) => ({
@@ -548,7 +558,7 @@ export function FlowchartEditor() {
       window.removeEventListener("mousemove", onMouseMove);
       window.removeEventListener("mouseup", onMouseUp);
     };
-  }, [handleMouseUp, moveDraggedNode, updateSelectionBox]);
+  }, [handleMouseUp, moveDraggedNode, updatePendingEdgePoint, updateSelectionBox]);
 
   const handleSvgMouseDown = (e: React.MouseEvent) => {
     if (e.button !== 0) return;
@@ -562,22 +572,19 @@ export function FlowchartEditor() {
   };
 
   const startEdge = (fromId: string, e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
     if (e.shiftKey) {
       startSelectionBox(e.clientX, e.clientY);
       return;
     }
     const w = screenToWorld(e.clientX, e.clientY);
     clearSelection();
-    setPendingEdge({ from: fromId, x: w.x, y: w.y });
+    setActivePendingEdge({ from: fromId, x: w.x, y: w.y });
   };
 
   const finishEdgeOn = (toId: string) => {
-    if (!pendingEdge || pendingEdge.from === toId) return;
-    setDoc((d) => ({
-      ...d,
-      edges: [...d.edges, { id: uid(), from: pendingEdge.from, to: toId }],
-    }));
-    setPendingEdge(null);
+    finishPendingEdgeOn(toId);
   };
 
   const handleWheel = (e: React.WheelEvent) => {
@@ -971,7 +978,6 @@ export function FlowchartEditor() {
             ref={svgRef}
             className="relative h-full w-full"
             onMouseDown={handleSvgMouseDown}
-            onMouseMove={handleMouseMove}
             onMouseUp={(e) => handleMouseUp(e.clientX, e.clientY)}
             onWheel={handleWheel}
           >

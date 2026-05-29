@@ -108,18 +108,25 @@ function PortDot({
   label?: string;
   onMouseDown?: (e: React.MouseEvent) => void;
 }) {
+  const handleMouseDown = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    onMouseDown?.(e);
+  };
+
   return (
     <g transform={`translate(${cx}, ${cy})`}>
+      <circle
+        r={12}
+        fill="transparent"
+        style={{ cursor: "crosshair" }}
+        onMouseDown={handleMouseDown}
+      />
       <circle
         r={6}
         fill="var(--color-accent)"
         stroke="var(--color-node-stroke)"
         strokeWidth={1.5}
-        style={{ cursor: "crosshair" }}
-        onMouseDown={(e) => {
-          e.stopPropagation();
-          onMouseDown?.(e);
-        }}
+        style={{ pointerEvents: "none" }}
       />
       {label && (
         <text
