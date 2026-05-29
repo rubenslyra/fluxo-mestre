@@ -1,0 +1,18 @@
+{
+  "name": "FluxoLab",
+  "short_name": "FluxoLab",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#f7fbff",
+  "theme_color": "#1f6bff",
+  "description": "Criador visual de fluxogramas ISO 5807 para ensino de lógica, algoritmos e engenharia de software.",
+  "icons": [
+    {
+      "src": "logo.png",
+      "sizes": "1024x1024",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}

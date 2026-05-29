@@ -2,6 +2,10 @@ import { Outlet, Link, createRootRoute, HeadContent, Scripts } from "@tanstack/r
 
 import appCss from "../styles.css?url";
 
+const appBaseUrl = import.meta.env.BASE_URL.endsWith("/")
+  ? import.meta.env.BASE_URL
+  : `${import.meta.env.BASE_URL}/`;
+
 function NotFoundComponent() {
   return (
     <div className="flex min-h-screen items-center justify-center bg-background px-4">
@@ -57,11 +61,11 @@ export const Route = createRootRoute({
       },
       {
         property: "og:image",
-        content: "/fluxolab/logo.png",
+        content: `${appBaseUrl}logo.png`,
       },
       {
         name: "twitter:image",
-        content: "/fluxolab/logo.png",
+        content: `${appBaseUrl}logo.png`,
       },
     ],
     links: [

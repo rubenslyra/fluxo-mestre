@@ -4,10 +4,10 @@
 
 O FluxoLab não precisa de chave no modo IA local.
 
-O painel de configurações permite inserir uma chave para uso local ou com gateways controlados pelo
-usuário. Essa chave pode ficar somente na sessão atual ou no armazenamento local do navegador. Em
-publicações abertas, prefira sempre um backend/proxy para guardar segredos, aplicar limites de uso e
-auditar chamadas.
+O painel de configurações permite inserir uma chave para uso local ou com integrações controladas
+pelo usuário. Essa chave pode ficar somente na sessão atual ou no armazenamento local do navegador.
+Em publicações abertas, prefira sempre um backend/proxy para guardar segredos, aplicar limites de
+uso e auditar chamadas.
 
 Nunca versionar:
 
@@ -28,4 +28,5 @@ A imagem Docker adiciona cabeçalhos básicos no Nginx:
 - `Permissions-Policy` restritiva para câmera, microfone, geolocalização e pagamento
 - CSP com `base-uri`, `object-src` e `frame-ancestors`
 
-`script-src` ainda não está restrito porque o runtime SSR atual injeta scripts inline.
+`script-src` ainda não está restrito porque a versão publicada ainda depende de scripts do runtime
+do cliente.
