@@ -7,7 +7,7 @@ import {
 } from "../settings/appSettings";
 import { SYMBOLS, type SymbolKind } from "./symbols";
 import { SymbolPreview, NodeShape } from "./NodeShape";
-import { edgePath } from "./geometry";
+import { edgePath, computeEdgeCurves } from "./geometry";
 import {
   canConnectFlowNodes,
   connectFlowNodes,
@@ -95,6 +95,7 @@ function normalizeDoc(value: unknown): FlowDoc {
             ? Number(partial.h)
             : def.defaultHeight,
         label: typeof partial.label === "string" ? partial.label : def.defaultLabel,
+        color: typeof partial.color === "string" ? partial.color : undefined,
       },
     ];
   });
@@ -116,6 +117,8 @@ function normalizeDoc(value: unknown): FlowDoc {
         from,
         to,
         label: typeof partial.label === "string" && partial.label ? partial.label : undefined,
+        kind: (typeof partial.kind === "string" && partial.kind) || undefined,
+        fromPort: (typeof partial.fromPort === "string" && partial.fromPort) || undefined,
       },
     ];
   });
@@ -1020,65 +1023,72 @@ export function FlowchartEditor() {
               })}
 
               {/* edges */}
-              {doc.edges.map((e) => {
-                const from = flowNodes.find((n) => n.id === e.from);
-                const to = flowNodes.find((n) => n.id === e.to);
-                if (!from || !to) return null;
-                const { d, mid } = edgePath(from, to);
-                const edgeSelected = selectedEdge === e.id;
-                return (
-                  <g key={e.id}>
-                    <path
-                      d={d}
-                      fill="none"
-                      stroke={edgeSelected ? "var(--color-node-selected)" : "var(--color-edge)"}
-                      strokeWidth={edgeSelected ? 3 : 2}
-                      markerEnd="url(#arrow)"
-                    />
-                    {e.label && (
-                      <g transform={`translate(${mid.x}, ${mid.y})`}>
-                        <rect
-                          x={-18}
-                          y={-10}
-                          width={36}
-                          height={18}
-                          rx={4}
-                          fill="var(--color-card)"
-                          stroke={
-                            edgeSelected ? "var(--color-node-selected)" : "var(--color-border)"
-                          }
-                        />
-                        <text
-                          textAnchor="middle"
-                          y={4}
-                          fontSize={11}
-                          fill="var(--color-foreground)"
-                        >
-                          {e.label}
-                        </text>
-                      </g>
-                    )}
-                    <path
-                      d={d}
-                      fill="none"
-                      stroke="transparent"
-                      strokeWidth={12}
-                      onClick={(ev) => {
-                        ev.stopPropagation();
-                        setSelected(null);
-                        setSelectedIds([]);
-                        setSelectedEdge(e.id);
-                      }}
-                      onDoubleClick={(ev) => {
-                        ev.preventDefault();
-                        ev.stopPropagation();
-                        focusEdgeLabelEditor(e.id);
-                      }}
-                      style={{ cursor: "pointer" }}
-                    />
-                  </g>
-                );
-              })}
+              {(() => {
+                const curves = computeEdgeCurves(doc.edges);
+                return doc.edges.map((e) => {
+                  const from = flowNodes.find((n) => n.id === e.from);
+                  const to = flowNodes.find((n) => n.id === e.to);
+                  if (!from || !to) return null;
+                  const { d, mid } = edgePath(from, to, {
+                    fromSide: e.fromPort,
+                    kind: e.kind,
+                    curve: curves.get(e.id) ?? 0,
+                  });
+                  const edgeSelected = selectedEdge === e.id;
+                  return (
+                    <g key={e.id}>
+                      <path
+                        d={d}
+                        fill="none"
+                        stroke={edgeSelected ? "var(--color-node-selected)" : "var(--color-edge)"}
+                        strokeWidth={edgeSelected ? 3 : 2}
+                        markerEnd="url(#arrow)"
+                      />
+                      {e.label && (
+                        <g transform={`translate(${mid.x}, ${mid.y})`}>
+                          <rect
+                            x={-18}
+                            y={-10}
+                            width={36}
+                            height={18}
+                            rx={4}
+                            fill="var(--color-card)"
+                            stroke={
+                              edgeSelected ? "var(--color-node-selected)" : "var(--color-border)"
+                            }
+                          />
+                          <text
+                            textAnchor="middle"
+                            y={4}
+                            fontSize={11}
+                            fill="var(--color-foreground)"
+                          >
+                            {e.label}
+                          </text>
+                        </g>
+                      )}
+                      <path
+                        d={d}
+                        fill="none"
+                        stroke="transparent"
+                        strokeWidth={12}
+                        onClick={(ev) => {
+                          ev.stopPropagation();
+                          setSelected(null);
+                          setSelectedIds([]);
+                          setSelectedEdge(e.id);
+                        }}
+                        onDoubleClick={(ev) => {
+                          ev.preventDefault();
+                          ev.stopPropagation();
+                          focusEdgeLabelEditor(e.id);
+                        }}
+                        style={{ cursor: "pointer" }}
+                      />
+                    </g>
+                  );
+                });
+              })()}
 
               {/* pending edge */}
               {pendingEdge &&

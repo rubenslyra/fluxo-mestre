@@ -15,6 +15,7 @@ release
 .vinxi
 .tanstack/**
 .nitro
+tmp/
 *.local
 .env
 .env.*

@@ -333,14 +333,19 @@ describe("generateCode", () => {
     );
   });
 
-  test("ignores grouping containers when generating code", () => {
+  test("treats grouping containers as code regions, never as steps", () => {
     const code = generateCode(groupedDoc, {
       language: "javascript",
       blueprint: "procedural",
       metadata,
     });
 
-    expect(code).not.toContain("Grupo 1");
+    // The container itself is never emitted as a callable step...
+    expect(code).not.toContain("Agrupador: Grupo 1");
+    expect(code).not.toContain("function step_group");
+    // ...but it now structures the generated code as a region wrapping its members.
+    expect(code).toContain("#region Grupo 1");
+    expect(code).toContain("#endregion");
     expect(code).toContain("Executar etapa");
     expect(code).toContain("FLOW_NAMESPACE");
   });

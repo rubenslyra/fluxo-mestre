@@ -1,3 +1,4 @@
+import { buildControlFlow, collectCFIds, type CFNode } from "./controlFlow";
 import { SYMBOLS } from "./symbols";
 import type { FlowDoc, FlowNode } from "./types";
 
@@ -89,6 +90,12 @@ export const CODE_REFERENCE_LINKS = [
   "Martin Fowler: arquitetura evolutiva e separação de domínio/dados/apresentação",
 ];
 
+type CodeGroup = {
+  id: string;
+  name: string;
+  stepIds: string[];
+};
+
 type CodeModel = {
   title: string;
   briefDescription: string;
@@ -103,6 +110,11 @@ type CodeModel = {
   steps: CodeStep[];
   decisions: CodeStep[];
   transitions: CodeTransition[];
+  /** Structured control flow (sequence / if-else / while) recovered from the graph. */
+  controlFlow: CFNode[];
+  stepsByNodeId: Map<string, CodeStep>;
+  groups: CodeGroup[];
+  isDecision: (nodeId: string) => boolean;
 };
 
 type CodeStep = {
@@ -112,6 +124,9 @@ type CodeStep = {
   kindName: string;
   methodName: string;
   constantName: string;
+  isDecision: boolean;
+  /** Name of the grouping container this step belongs to, if any. */
+  groupName?: string;
 };
 
 type CodeTransition = {
@@ -159,14 +174,61 @@ export function getArtifactFileName(
   return `${base}.cpp`;
 }
 
+// Spatial containment: a flow node belongs to the smallest group whose box covers its center.
+function assignGroups(doc: FlowDoc): Map<string, { id: string; name: string }> {
+  const groups = doc.nodes.filter((node) => node.kind === "group");
+  const membership = new Map<string, { id: string; name: string }>();
+  if (groups.length === 0) return membership;
+
+  for (const node of doc.nodes) {
+    if (node.kind === "group") continue;
+    let best: FlowNode | null = null;
+    let bestArea = Infinity;
+    for (const group of groups) {
+      const left = group.x - group.w / 2;
+      const right = group.x + group.w / 2;
+      const top = group.y - group.h / 2;
+      const bottom = group.y + group.h / 2;
+      if (node.x >= left && node.x <= right && node.y >= top && node.y <= bottom) {
+        const area = group.w * group.h;
+        if (area < bestArea) {
+          bestArea = area;
+          best = group;
+        }
+      }
+    }
+    if (best) {
+      membership.set(node.id, {
+        id: best.id,
+        name: best.label.trim() || SYMBOLS.group.defaultLabel,
+      });
+    }
+  }
+  return membership;
+}
+
+function findStartNodeId(nodes: FlowNode[]) {
+  const start = nodes.find(
+    (node) =>
+      node.kind === "terminator" &&
+      node.label
+        .normalize("NFD")
+        .replace(/[̀-ͯ]/g, "")
+        .toLowerCase()
+        .includes("inicio"),
+  );
+  return (start ?? nodes[0])?.id;
+}
+
 function createCodeModel(doc: FlowDoc, metadata?: Partial<GenerationMetadata>): CodeModel {
   const normalizedMetadata = normalizeMetadata(metadata, doc);
   const flowDoc = {
     nodes: doc.nodes.filter((node) => node.kind !== "group"),
     edges: doc.edges,
   };
+  const membership = assignGroups(doc);
   const orderedNodes = orderNodes(flowDoc);
-  const steps = orderedNodes.map((node, index) => {
+  const steps: CodeStep[] = orderedNodes.map((node, index) => {
     const label = node.label.trim() || SYMBOLS[node.kind].defaultLabel;
     return {
       nodeId: node.id,
@@ -175,9 +237,32 @@ function createCodeModel(doc: FlowDoc, metadata?: Partial<GenerationMetadata>): 
       kindName: SYMBOLS[node.kind].name,
       methodName: makeIdentifier(`${index + 1}_${label}`),
       constantName: makeConstant(`${index + 1}_${label}`),
+      isDecision: node.kind === "decision",
+      groupName: membership.get(node.id)?.name,
     };
   });
   const stepsByNodeId = new Map(steps.map((step) => [step.nodeId, step]));
+
+  const controlFlow = buildControlFlow(
+    flowDoc.nodes.map((node) => ({ id: node.id, kind: node.kind })),
+    flowDoc.edges,
+    findStartNodeId(flowDoc.nodes),
+  );
+
+  // Preserve group ordering and keep only groups that actually contain steps.
+  const groupOrder: CodeGroup[] = [];
+  const groupIndex = new Map<string, CodeGroup>();
+  for (const step of steps) {
+    const info = membership.get(step.nodeId);
+    if (!info) continue;
+    let group = groupIndex.get(info.id);
+    if (!group) {
+      group = { id: info.id, name: info.name, stepIds: [] };
+      groupIndex.set(info.id, group);
+      groupOrder.push(group);
+    }
+    group.stepIds.push(step.nodeId);
+  }
 
   return {
     title: normalizedMetadata.title,
@@ -191,12 +276,16 @@ function createCodeModel(doc: FlowDoc, metadata?: Partial<GenerationMetadata>): 
     moduleName: makeIdentifier(normalizedMetadata.title) || "fluxolab_flow",
     flowKey: makeIdentifier(normalizedMetadata.title) || "fluxolab_flow",
     steps,
-    decisions: steps.filter((step) => step.kindName === SYMBOLS.decision.name),
+    decisions: steps.filter((step) => step.isDecision),
     transitions: flowDoc.edges.flatMap((edge) => {
       const from = stepsByNodeId.get(edge.from);
       const to = stepsByNodeId.get(edge.to);
       return from && to ? [{ from, to, label: edge.label }] : [];
     }),
+    controlFlow,
+    stepsByNodeId,
+    groups: groupOrder,
+    isDecision: (nodeId: string) => stepsByNodeId.get(nodeId)?.isDecision ?? false,
   };
 }
 
@@ -348,16 +437,171 @@ function quote(value: string) {
   return JSON.stringify(value);
 }
 
+const FALSE_BRANCH_RE = /^(n|nao|não|no|false|falso|f)$/i;
+
+function groupTag(step: CodeStep) {
+  return step.groupName ? ` [Grupo: ${step.groupName}]` : "";
+}
+
+function javaMethodName(step: CodeStep) {
+  return makeIdentifier(step.methodName).replace(/_([a-z])/g, (_, c) => c.toUpperCase());
+}
+
+/**
+ * Language-agnostic emitter for the structured control flow. Each generator supplies
+ * the few tokens that differ (call syntax, brace vs. indentation, region markers) and
+ * this walker renders nested if/while blocks plus group "regions".
+ */
+interface FlowEmitter {
+  comment: string;
+  indentUnit: string;
+  baseIndent: string;
+  braces: boolean;
+  emptyStmt: string;
+  callStmt: (step: CodeStep) => string;
+  condExpr: (step: CodeStep) => string;
+  regionOpen: (name: string) => string;
+  regionClose: (name: string) => string;
+}
+
+function renderControlFlow(model: CodeModel, em: FlowEmitter): string {
+  const lines: string[] = [];
+  const ind = (level: number) => em.baseIndent + em.indentUnit.repeat(level);
+  const stepOf = (id: string) => model.stepsByNodeId.get(id);
+  const negate = (cond: string) => (em.braces ? `!(${cond})` : `not (${cond})`);
+
+  const block = (
+    tree: CFNode[],
+    level: number,
+    opener: string,
+    trailingComment?: string,
+  ) => {
+    lines.push(ind(level) + opener + (trailingComment ? `  ${em.comment} ${trailingComment}` : ""));
+    const before = lines.length;
+    walk(tree, level + 1);
+    if (lines.length === before && !em.braces) lines.push(ind(level + 1) + em.emptyStmt);
+    if (em.braces) lines.push(ind(level) + "}");
+  };
+
+  function walk(tree: CFNode[], level: number) {
+    let openGroup: string | undefined;
+    const closeRegion = () => {
+      if (openGroup) {
+        lines.push(ind(level) + em.regionClose(openGroup));
+        openGroup = undefined;
+      }
+    };
+
+    for (const node of tree) {
+      if (node.type === "step") {
+        const step = stepOf(node.id);
+        if (!step) continue;
+        if (step.groupName !== openGroup) {
+          closeRegion();
+          if (step.groupName) {
+            lines.push(ind(level) + em.regionOpen(step.groupName));
+            openGroup = step.groupName;
+          }
+        }
+        lines.push(ind(level) + em.callStmt(step));
+        continue;
+      }
+
+      closeRegion();
+
+      if (node.type === "if") {
+        const step = stepOf(node.id);
+        const cond = step ? em.condExpr(step) : em.braces ? "true" : "True";
+        block(
+          node.then,
+          level,
+          em.braces ? `if (${cond}) {` : `if ${cond}:`,
+          node.thenLabel,
+        );
+        if (node.else.length) {
+          // Reuse the closing of the then-block as the else opener for brace languages.
+          if (em.braces) lines[lines.length - 1] = ind(level) + "} else {";
+          else lines.push(ind(level) + "else:");
+          if (node.elseLabel) {
+            lines[lines.length - 1] += `  ${em.comment} ${node.elseLabel}`;
+          }
+          const before = lines.length;
+          walk(node.else, level + 1);
+          if (lines.length === before && !em.braces) lines.push(ind(level + 1) + em.emptyStmt);
+          if (em.braces) lines.push(ind(level) + "}");
+        }
+      } else if (node.type === "while") {
+        const step = stepOf(node.id);
+        let cond = step?.isDecision ? em.condExpr(step) : em.braces ? "true" : "True";
+        if (step?.isDecision && node.condLabel && FALSE_BRANCH_RE.test(node.condLabel.trim())) {
+          cond = negate(cond);
+        }
+        block(
+          node.body,
+          level,
+          em.braces ? `while (${cond}) {` : `while ${cond}:`,
+          node.condLabel ? `repete enquanto a saída "${node.condLabel}" for tomada` : undefined,
+        );
+      } else if (node.type === "goto") {
+        const step = stepOf(node.id);
+        lines.push(
+          ind(level) +
+            `${em.comment} retornar para "${step?.label ?? node.id}" (${node.note ?? "ciclo"})`,
+        );
+      }
+    }
+    closeRegion();
+  }
+
+  walk(model.controlFlow, 0);
+
+  // Steps disconnected from the main flow still get invoked so nothing is silently dropped.
+  const covered = collectCFIds(model.controlFlow);
+  const orphans = model.steps.filter((step) => !covered.has(step.nodeId));
+  if (orphans.length) {
+    lines.push(ind(0) + `${em.comment} Passos não conectados ao fluxo principal:`);
+    for (const step of orphans) lines.push(ind(0) + em.callStmt(step));
+  }
+
+  if (lines.length === 0) {
+    lines.push(ind(0) + (em.braces ? "return;" : em.emptyStmt));
+  }
+  return lines.join("\n");
+}
+
 function pythonStepFunctions(model: CodeModel) {
   return model.steps
-    .map(
-      (step) => `def ${step.methodName}(context: FlowContext) -> None:
-    """${step.kindName}: ${step.label}"""
+    .map((step) => {
+      const audit = `    context.audit.append(${quote(`${step.kindName}: ${step.label}`)})`;
+      if (step.isDecision) {
+        return `def ${step.methodName}(context: FlowContext) -> bool:
+    """${step.kindName}: ${step.label}${groupTag(step)}"""
+${audit}
+    # TODO: avaliar a condição "${step.label}" e retornar True/False.
+    return False
+`;
+      }
+      return `def ${step.methodName}(context: FlowContext) -> None:
+    """${step.kindName}: ${step.label}${groupTag(step)}"""
     # TODO: implementar regra do símbolo "${step.label}".
-    context.audit.append(${quote(`${step.kindName}: ${step.label}`)})
-`,
-    )
+${audit}
+`;
+    })
     .join("\n");
+}
+
+function pythonFlowEmitter(): FlowEmitter {
+  return {
+    comment: "#",
+    indentUnit: "    ",
+    baseIndent: "    ",
+    braces: false,
+    emptyStmt: "pass",
+    callStmt: (step) => `${step.methodName}(context)`,
+    condExpr: (step) => `${step.methodName}(context)`,
+    regionOpen: (name) => `# region ${name}`,
+    regionClose: () => "# endregion",
+  };
 }
 
 function generatePython(model: CodeModel, blueprint: CodeBlueprintId) {
@@ -498,8 +742,9 @@ def run_flow(context: FlowContext) -> None:
 `;
   }
 
+  const body = renderControlFlow(model, pythonFlowEmitter());
   return `${header}from dataclasses import dataclass, field
-from typing import Any, Callable
+from typing import Any
 
 FLOW_NAMESPACE = ${quote(model.packageName)}
 
@@ -511,14 +756,9 @@ class FlowContext:
 
 
 ${pythonStepFunctions(model)}
-FLOW_STEPS: list[Callable[[FlowContext], None]] = [
-    ${stepNames}
-]
-
-
 def run_flow(context: FlowContext) -> None:
-    for step in FLOW_STEPS:
-        step(context)
+    """Executa o fluxo seguindo a estrutura de decisões e repetições do fluxograma."""
+${body}
 `;
 }
 
@@ -669,8 +909,40 @@ ${model.steps.map((step) => `        new ${makePascal(step.methodName)}Command()
 `;
   }
 
-  return `${header}using System;
-using System.Collections.Generic;
+  const proceduralMethods = model.steps
+    .map((step) => {
+      const audit = `        context.Audit.Add(${quote(escapeComment(`${step.kindName}: ${step.label}`))});`;
+      if (step.isDecision) {
+        return `    // ${escapeComment(`${step.kindName}: ${step.label}`)}${groupTag(step)}
+    private static bool ${makePascal(step.methodName)}(FlowContext context)
+    {
+${audit}
+        // TODO: avaliar a condição "${escapeComment(step.label)}".
+        return false;
+    }
+`;
+      }
+      return `    // ${escapeComment(`${step.kindName}: ${step.label}`)}${groupTag(step)}
+    private static void ${makePascal(step.methodName)}(FlowContext context)
+    {
+${audit}
+        // TODO: implementar regra do símbolo "${escapeComment(step.label)}".
+    }
+`;
+    })
+    .join("\n");
+  const csharpEmitter: FlowEmitter = {
+    comment: "//",
+    indentUnit: "    ",
+    baseIndent: "        ",
+    braces: true,
+    emptyStmt: "return;",
+    callStmt: (step) => `${makePascal(step.methodName)}(context);`,
+    condExpr: (step) => `${makePascal(step.methodName)}(context)`,
+    regionOpen: (name) => `#region ${name}`,
+    regionClose: () => "#endregion",
+  };
+  return `${header}using System.Collections.Generic;
 
 namespace ${model.namespace};
 
@@ -684,10 +956,10 @@ public static class ${model.className}
 {
     public static void Run(FlowContext context)
     {
-${calls || "        return;"}
+${renderControlFlow(model, csharpEmitter)}
     }
 
-${methods}
+${proceduralMethods}
 }
 `;
 }
@@ -806,6 +1078,38 @@ ${model.steps.map((step) => `        context -> context.audit.add(${quote(escape
 `;
   }
 
+  const proceduralMethods = model.steps
+    .map((step) => {
+      const name = javaMethodName(step);
+      const audit = `        context.audit.add(${quote(escapeComment(`${step.kindName}: ${step.label}`))});`;
+      if (step.isDecision) {
+        return `    // ${escapeComment(`${step.kindName}: ${step.label}`)}${groupTag(step)}
+    private static boolean ${name}(FlowContext context) {
+${audit}
+        // TODO: avaliar a condição "${escapeComment(step.label)}".
+        return false;
+    }
+`;
+      }
+      return `    // ${escapeComment(`${step.kindName}: ${step.label}`)}${groupTag(step)}
+    private static void ${name}(FlowContext context) {
+${audit}
+        // TODO: implementar regra do símbolo "${escapeComment(step.label)}".
+    }
+`;
+    })
+    .join("\n");
+  const javaEmitter: FlowEmitter = {
+    comment: "//",
+    indentUnit: "    ",
+    baseIndent: "        ",
+    braces: true,
+    emptyStmt: "return;",
+    callStmt: (step) => `${javaMethodName(step)}(context);`,
+    condExpr: (step) => `${javaMethodName(step)}(context)`,
+    regionOpen: (name) => `// region ${name}`,
+    regionClose: () => "// endregion",
+  };
   return `${header}package ${model.packageName};
 
 import java.util.*;
@@ -817,10 +1121,10 @@ class FlowContext {
 
 public final class ${model.className} {
     public static void run(FlowContext context) {
-${methodCalls || "        return;"}
+${renderControlFlow(model, javaEmitter)}
     }
 
-${methods}
+${proceduralMethods}
 }
 `;
 }
@@ -933,6 +1237,37 @@ export function runFlow(context) {
 `;
   }
 
+  const proceduralFunctions = model.steps
+    .map((step) => {
+      const audit = `  context.audit.push(${quote(escapeComment(`${step.kindName}: ${step.label}`))});`;
+      if (step.isDecision) {
+        return `// ${escapeComment(`${step.kindName}: ${step.label}`)}${groupTag(step)}
+function ${step.methodName}(context) {
+${audit}
+  // TODO: avaliar a condição "${escapeComment(step.label)}".
+  return false;
+}
+`;
+      }
+      return `// ${escapeComment(`${step.kindName}: ${step.label}`)}${groupTag(step)}
+function ${step.methodName}(context) {
+${audit}
+  // TODO: implementar regra do símbolo "${escapeComment(step.label)}".
+}
+`;
+    })
+    .join("\n");
+  const jsEmitter: FlowEmitter = {
+    comment: "//",
+    indentUnit: "  ",
+    baseIndent: "  ",
+    braces: true,
+    emptyStmt: "return;",
+    callStmt: (step) => `${step.methodName}(context);`,
+    condExpr: (step) => `${step.methodName}(context)`,
+    regionOpen: (name) => `// #region ${name}`,
+    regionClose: () => "// #endregion",
+  };
   return `${header}export const FLOW_NAMESPACE = ${quote(model.packageName)};
 
 export class FlowContext {
@@ -942,13 +1277,9 @@ export class FlowContext {
   }
 }
 
-${functions}
-export const FLOW_STEPS = [
-${stepArray}
-];
-
+${proceduralFunctions}
 export function runFlow(context) {
-  for (const step of FLOW_STEPS) step(context);
+${renderControlFlow(model, jsEmitter)}
 }
 `;
 }
@@ -1069,6 +1400,37 @@ void run_flow(FlowContext& context) {
 `;
   }
 
+  const proceduralMethods = model.steps
+    .map((step) => {
+      const audit = `    context.audit.push_back(${quote(escapeComment(`${step.kindName}: ${step.label}`))});`;
+      if (step.isDecision) {
+        return `// ${escapeComment(`${step.kindName}: ${step.label}`)}${groupTag(step)}
+bool ${step.methodName}(FlowContext& context) {
+${audit}
+    // TODO: avaliar a condição "${escapeComment(step.label)}".
+    return false;
+}
+`;
+      }
+      return `// ${escapeComment(`${step.kindName}: ${step.label}`)}${groupTag(step)}
+void ${step.methodName}(FlowContext& context) {
+${audit}
+    // TODO: implementar regra do símbolo "${escapeComment(step.label)}".
+}
+`;
+    })
+    .join("\n");
+  const cppEmitter: FlowEmitter = {
+    comment: "//",
+    indentUnit: "    ",
+    baseIndent: "    ",
+    braces: true,
+    emptyStmt: "return;",
+    callStmt: (step) => `${step.methodName}(context);`,
+    condExpr: (step) => `${step.methodName}(context)`,
+    regionOpen: (name) => `// region ${name}`,
+    regionClose: () => "// endregion",
+  };
   return `${header}#include <string>
 #include <unordered_map>
 #include <vector>
@@ -1080,9 +1442,9 @@ struct FlowContext {
     std::vector<std::string> audit;
 };
 
-${methods}
+${proceduralMethods}
 void run_flow(FlowContext& context) {
-${calls || "    return;"}
+${renderControlFlow(model, cppEmitter)}
 }
 
 }  // namespace ${model.cppNamespace}
