@@ -1,8 +1,43 @@
 # FluxoLab
 
+<p align="center">
+  <img src="public/logo.png" alt="FluxoLab" width="240" />
+</p>
+
 Criador visual de fluxogramas ISO 5807 para aulas de lógica, algoritmos e engenharia de software.
 O projeto inclui editor interativo, desafios didáticos, validação do fluxo, exportação e geração de
 código por blueprints.
+
+## Como usar
+
+1. Acesse a versão publicada no GitHub Pages quando estiver disponível.
+2. Para baixar e rodar localmente, clone o repositório e execute:
+
+```bash
+bun install
+bun run dev
+```
+
+3. Para gerar um pacote estático de publicação:
+
+```bash
+bun run build:hostinger
+```
+
+4. Para publicação em subpasta diferente, use:
+
+```bash
+bun run build:hostinger:fluxlab
+```
+
+5. Se estiver usando hospedagem compartilhada sem Node, envie o conteúdo do ZIP gerado para a pasta
+   pública do site, por exemplo `public_html/fluxolab/`.
+
+## Download
+
+- Use a página de releases do GitHub para baixar o pacote pronto.
+- O pacote estático não requer Node no servidor.
+- A aplicação também funciona localmente no navegador com `bun run dev`.
 
 ## Origem
 

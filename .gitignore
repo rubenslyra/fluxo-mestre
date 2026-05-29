@@ -28,6 +28,9 @@ release
 .wrangler/
 .dev.vars
 
+# Internal documentation not meant for distribution
+docs/repo-interno/
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
