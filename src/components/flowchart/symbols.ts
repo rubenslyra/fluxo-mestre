@@ -1,5 +1,6 @@
 // ISO 5807 flowchart symbol definitions
 export type SymbolKind =
+  | "group"
   | "terminator"
   | "process"
   | "decision"
@@ -21,6 +22,14 @@ export interface SymbolDef {
 }
 
 export const SYMBOLS: Record<SymbolKind, SymbolDef> = {
+  group: {
+    kind: "group",
+    name: "Agrupador",
+    description: "Container visual para organizar um subconjunto do fluxo",
+    defaultLabel: "Grupo",
+    defaultWidth: 300,
+    defaultHeight: 220,
+  },
   terminator: {
     kind: "terminator",
     name: "Terminal",
@@ -108,6 +117,10 @@ export function getShapePath(kind: SymbolKind, w: number, h: number): string {
   const x = -w / 2;
   const y = -h / 2;
   switch (kind) {
+    case "group": {
+      const r = 12;
+      return `M ${x + r} ${y} H ${x + w - r} Q ${x + w} ${y} ${x + w} ${y + r} V ${y + h - r} Q ${x + w} ${y + h} ${x + w - r} ${y + h} H ${x + r} Q ${x} ${y + h} ${x} ${y + h - r} V ${y + r} Q ${x} ${y} ${x + r} ${y} Z`;
+    }
     case "terminator": {
       const r = h / 2;
       return `M ${x + r} ${y} H ${x + w - r} A ${r} ${r} 0 0 1 ${x + w - r} ${y + h} H ${x + r} A ${r} ${r} 0 0 1 ${x + r} ${y} Z`;

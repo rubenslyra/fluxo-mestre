@@ -20,6 +20,7 @@ export function NodeShape({
 }: NodeShapeProps) {
   const path = getShapePath(node.kind, node.w, node.h);
   const isDecision = node.kind === "decision";
+  const isGroup = node.kind === "group";
 
   return (
     <g
@@ -32,32 +33,60 @@ export function NodeShape({
         onDoubleClick?.(e);
       }}
     >
-      <path
-        d={path}
-        fill="var(--color-node)"
-        stroke={selected ? "var(--color-node-selected)" : "var(--color-node-stroke)"}
-        strokeWidth={selected ? 3 : 2}
-      />
+      {isGroup ? (
+        <>
+          <rect
+            x={-node.w / 2}
+            y={-node.h / 2}
+            width={node.w}
+            height={node.h}
+            rx={12}
+            fill="var(--color-background)"
+            fillOpacity={0.45}
+            stroke={selected ? "var(--color-node-selected)" : "var(--color-accent)"}
+            strokeWidth={selected ? 3 : 2}
+            strokeDasharray="10 6"
+          />
+          <path
+            d={`M ${-node.w / 2 + 20} ${-node.h / 2 + 30} H ${node.w / 2 - 20}`}
+            fill="none"
+            stroke="var(--color-accent)"
+            strokeWidth={1.5}
+            strokeDasharray="6 4"
+            opacity={0.65}
+            pointerEvents="none"
+          />
+        </>
+      ) : (
+        <path
+          d={path}
+          fill="var(--color-node)"
+          stroke={selected ? "var(--color-node-selected)" : "var(--color-node-stroke)"}
+          strokeWidth={selected ? 3 : 2}
+        />
+      )}
       <foreignObject
         x={-node.w / 2 + 8}
-        y={-node.h / 2 + 4}
+        y={isGroup ? -node.h / 2 + 8 : -node.h / 2 + 4}
         width={node.w - 16}
-        height={node.h - 8}
+        height={isGroup ? node.h - 16 : node.h - 8}
       >
         <div
           style={{
             width: "100%",
             height: "100%",
             display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
+            alignItems: isGroup ? "center" : "center",
+            justifyContent: isGroup ? "flex-start" : "center",
             textAlign: "center",
-            fontSize: 13,
+            fontSize: isGroup ? 12 : 13,
+            fontWeight: isGroup ? 700 : 400,
             color: "var(--color-foreground)",
             fontFamily: "var(--font-display)",
             wordBreak: "break-word",
-            lineHeight: 1.2,
+            lineHeight: isGroup ? 1.18 : 1.2,
             userSelect: "none",
+            paddingTop: isGroup ? 10 : 0,
           }}
         >
           {node.label}
@@ -75,7 +104,7 @@ export function NodeShape({
       />
 
       {/* Out port(s) */}
-      {isDecision ? (
+      {isGroup ? null : isDecision ? (
         <>
           <PortDot
             cx={node.w / 2}

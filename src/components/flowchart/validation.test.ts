@@ -94,4 +94,18 @@ describe("validateFlow", () => {
 
     expect(messages(doc)).toContain("Conexão duplicada (start→end)");
   });
+
+  test("ignores agrupador nodes for structural validation", () => {
+    const doc: FlowDoc = {
+      nodes: [
+        node({ id: "start", kind: "terminator", label: "Inicio" }),
+        node({ id: "group", kind: "group", label: "Grupo 1", w: 280, h: 200 }),
+        node({ id: "step", label: "Processar" }),
+        node({ id: "end", kind: "terminator", label: "Fim" }),
+      ],
+      edges: [edge("start", "step"), edge("step", "end")],
+    };
+
+    expect(validateFlow(doc)).toEqual([]);
+  });
 });

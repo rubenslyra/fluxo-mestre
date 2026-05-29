@@ -35,9 +35,9 @@ export function findTopNodeAtPoint(
   point: Point,
   options: { excludeId?: string } = {},
 ) {
-  return [...nodes]
+  const hits = [...nodes]
     .reverse()
-    .find(
+    .filter(
       (node) =>
         node.id !== options.excludeId &&
         point.x >= node.x - node.w / 2 &&
@@ -45,6 +45,7 @@ export function findTopNodeAtPoint(
         point.y >= node.y - node.h / 2 &&
         point.y <= node.y + node.h / 2,
     );
+  return hits.find((node) => node.kind !== "group") ?? hits[0];
 }
 
 export function moveNodesTo(

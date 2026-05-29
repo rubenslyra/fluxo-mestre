@@ -42,6 +42,16 @@ describe("flowModel", () => {
     );
   });
 
+  test("prefers regular nodes over overlapping grouping containers", () => {
+    const nodes = [
+      node({ id: "group", kind: "group", x: 100, y: 100, w: 300, h: 220 }),
+      node({ id: "process", x: 100, y: 100, w: 160, h: 70 }),
+    ];
+
+    expect(findTopNodeAtPoint(nodes, { x: 100, y: 100 })?.id).toBe("process");
+    expect(findTopNodeAtPoint(nodes, { x: 20, y: 20 })?.id).toBe("group");
+  });
+
   test("connects valid nodes and rejects self, missing, and duplicate edges", () => {
     const doc: FlowDoc = {
       nodes: [node({ id: "a" }), node({ id: "b" })],

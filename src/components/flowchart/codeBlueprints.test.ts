@@ -1,5 +1,11 @@
 import { describe, expect, test } from "bun:test";
-import { CODE_BLUEPRINTS, CODE_LANGUAGES, generateCode } from "./codeBlueprints";
+import {
+  CODE_BLUEPRINTS,
+  CODE_LANGUAGES,
+  generateArtifact,
+  generateCode,
+  getArtifactFileName,
+} from "./codeBlueprints";
 import type { FlowDoc, FlowEdge, FlowNode } from "./types";
 
 type NodeInit = Pick<FlowNode, "id" | "kind" | "label"> &
@@ -90,6 +96,20 @@ const disconnectedDoc = doc([
 ]);
 
 const emptyDoc: FlowDoc = { nodes: [], edges: [] };
+const groupedDoc: FlowDoc = {
+  nodes: [
+    node({ id: "group", kind: "group", label: "Grupo 1", w: 300, h: 220 }),
+    node({ id: "start", kind: "terminator", label: "Início", w: 140, h: 60 }),
+    node({ id: "task", kind: "process", label: "Executar etapa", y: 90 }),
+    node({ id: "end", kind: "terminator", label: "Fim", y: 180, w: 140, h: 60 }),
+  ],
+  edges: [edge("start", "task"), edge("task", "end")],
+};
+const metadata = {
+  title: "Sistema de Notas do Módulo",
+  briefDescription: "Calcula e registra notas finais de alunos.",
+  comments: "Usar em revisão de arquitetura.",
+};
 
 function expectLanguageMarkers(code: string, language: (typeof CODE_LANGUAGES)[number]["id"]) {
   switch (language) {
@@ -256,5 +276,72 @@ describe("generateCode", () => {
       expect(emptyCode).not.toContain("undefined");
       expect(emptyCode.length).toBeGreaterThan(0);
     }
+  });
+
+  test("uses the title as the source for namespaces, classes and filenames", () => {
+    const csharp = generateCode(linearDoc, {
+      language: "csharp",
+      blueprint: "template-method",
+      metadata,
+    });
+    const java = generateCode(linearDoc, {
+      language: "java",
+      blueprint: "strategy",
+      metadata,
+    });
+    const cpp = generateCode(linearDoc, {
+      language: "cpp",
+      blueprint: "procedural",
+      metadata,
+    });
+
+    expect(csharp).toContain("namespace FluxoLab.SistemaDeNotasDoModulo;");
+    expect(csharp).toContain("public sealed class SistemaDeNotasDoModuloFlow");
+    expect(java).toContain("package fluxolab.sistema_de_notas_do_modulo;");
+    expect(java).toContain("public final class SistemaDeNotasDoModuloFlow");
+    expect(cpp).toContain("namespace fluxolab::sistema_de_notas_do_modulo");
+    expect(getArtifactFileName("code", { language: "java", metadata })).toBe(
+      "SistemaDeNotasDoModuloFlow.java",
+    );
+  });
+
+  test("generates UML and database scripts with metadata", () => {
+    const uml = generateArtifact(linearDoc, {
+      artifact: "uml",
+      language: "python",
+      blueprint: "procedural",
+      metadata,
+    });
+    const database = generateArtifact(linearDoc, {
+      artifact: "database",
+      language: "python",
+      blueprint: "procedural",
+      metadata,
+    });
+
+    expect(uml).toContain("@startuml");
+    expect(uml).toContain('title "Sistema de Notas do Módulo"');
+    expect(uml).toContain("S1 --> S2");
+    expect(uml).toContain("Comentarios: Usar em revisão de arquitetura.");
+
+    expect(database).toContain('CREATE SCHEMA IF NOT EXISTS "sistema_de_notas_do_modulo";');
+    expect(database).toContain('CREATE TABLE IF NOT EXISTS "sistema_de_notas_do_modulo".flow_step');
+    expect(database).toContain("INSERT INTO");
+    expect(database).toContain("'Sistema de Notas do Módulo'");
+    expect(getArtifactFileName("database", { language: "python", metadata })).toBe(
+      "sistema_de_notas_do_modulo.sql",
+    );
+  });
+
+  test("ignores grouping containers when generating code", () => {
+    const code = generateCode(groupedDoc, {
+      language: "javascript",
+      blueprint: "procedural",
+      metadata,
+    });
+
+    expect(code).not.toContain("Grupo 1");
+    expect(code).toContain("Executar etapa");
+    expect(code).toContain("FLOW_NAMESPACE");
   });
 });

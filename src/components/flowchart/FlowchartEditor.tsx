@@ -715,6 +715,8 @@ export function FlowchartEditor() {
   const selectedNode = doc.nodes.find((n) => n.id === selected) ?? null;
   const selectedNodeCount = selectedIds.length;
   const selectedEdgeData = doc.edges.find((e) => e.id === selectedEdge) ?? null;
+  const groupNodes = doc.nodes.filter((node) => node.kind === "group");
+  const flowNodes = doc.nodes.filter((node) => node.kind !== "group");
 
   const validation = validateFlow(doc);
 
@@ -995,10 +997,32 @@ export function FlowchartEditor() {
               </marker>
             </defs>
             <g id="world" transform={`translate(${view.x}, ${view.y}) scale(${view.k})`}>
+              {/* groups */}
+              {groupNodes.map((n) => {
+                const dim = matchedIds && !matchedIds.has(n.id);
+                return (
+                  <g key={n.id} style={{ opacity: dim ? 0.25 : 1, transition: "opacity .15s" }}>
+                    <NodeShape
+                      node={n}
+                      selected={
+                        selectedIdSet.has(n.id) ||
+                        (selectionPreviewIdSet?.has(n.id) ?? false) ||
+                        (matchedIds?.has(n.id) ?? false)
+                      }
+                      onMouseDown={(e) => handleNodeMouseDown(n, e)}
+                      onDoubleClick={(e) => {
+                        e.preventDefault();
+                        focusLabelEditor(n.id);
+                      }}
+                    />
+                  </g>
+                );
+              })}
+
               {/* edges */}
               {doc.edges.map((e) => {
-                const from = doc.nodes.find((n) => n.id === e.from);
-                const to = doc.nodes.find((n) => n.id === e.to);
+                const from = flowNodes.find((n) => n.id === e.from);
+                const to = flowNodes.find((n) => n.id === e.to);
                 if (!from || !to) return null;
                 const { d, mid } = edgePath(from, to);
                 const edgeSelected = selectedEdge === e.id;
@@ -1059,7 +1083,7 @@ export function FlowchartEditor() {
               {/* pending edge */}
               {pendingEdge &&
                 (() => {
-                  const from = doc.nodes.find((n) => n.id === pendingEdge.from);
+                  const from = flowNodes.find((n) => n.id === pendingEdge.from);
                   if (!from) return null;
                   return (
                     <line
@@ -1075,7 +1099,7 @@ export function FlowchartEditor() {
                 })()}
 
               {/* nodes */}
-              {doc.nodes.map((n) => {
+              {flowNodes.map((n) => {
                 const dim = matchedIds && !matchedIds.has(n.id);
                 return (
                   <g key={n.id} style={{ opacity: dim ? 0.25 : 1, transition: "opacity .15s" }}>

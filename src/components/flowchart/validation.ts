@@ -28,7 +28,8 @@ function normalizedEdgeLabel(label: string | undefined) {
 export function validateFlow(doc: FlowDoc): Issue[] {
   const issues: Issue[] = [];
   if (doc.nodes.length === 0) return issues;
-  const terms = doc.nodes.filter((n) => n.kind === "terminator");
+  const flowNodes = doc.nodes.filter((n) => n.kind !== "group");
+  const terms = flowNodes.filter((n) => n.kind === "terminator");
   const startIds = terms.filter((n) => START_RE.test(n.label)).map((n) => n.id);
   const endIds = terms.filter((n) => END_RE.test(n.label)).map((n) => n.id);
   const hasStart = startIds.length > 0;
@@ -36,7 +37,7 @@ export function validateFlow(doc: FlowDoc): Issue[] {
   if (!hasStart) issues.push({ level: "error", msg: "Falta um símbolo Terminal de Início" });
   if (!hasEnd) issues.push({ level: "error", msg: "Falta um símbolo Terminal de Fim" });
 
-  const ids = new Set(doc.nodes.map((n) => n.id));
+  const ids = new Set(flowNodes.map((n) => n.id));
   const validEdges = doc.edges.filter((e) => ids.has(e.from) && ids.has(e.to) && e.from !== e.to);
   const invalidEdges = doc.edges.filter(
     (e) => !ids.has(e.from) || !ids.has(e.to) || e.from === e.to,
@@ -72,7 +73,7 @@ export function validateFlow(doc: FlowDoc): Issue[] {
   });
 
   const locallyBroken = new Set<string>();
-  doc.nodes.forEach((n) => {
+  flowNodes.forEach((n) => {
     const inc = incoming.get(n.id) ?? 0;
     const out = outgoing.get(n.id) ?? 0;
     const isStart = n.kind === "terminator" && START_RE.test(n.label);
@@ -111,7 +112,7 @@ export function validateFlow(doc: FlowDoc): Issue[] {
 
   if (hasStart) {
     const reachable = walkFrom(startIds, adjacency);
-    doc.nodes.forEach((n) => {
+    flowNodes.forEach((n) => {
       if (!reachable.has(n.id) && !locallyBroken.has(n.id)) {
         issues.push({
           level: "warning",
@@ -123,7 +124,7 @@ export function validateFlow(doc: FlowDoc): Issue[] {
 
   if (hasEnd) {
     const converges = walkFrom(endIds, reverseAdjacency);
-    doc.nodes.forEach((n) => {
+    flowNodes.forEach((n) => {
       if (!converges.has(n.id) && !locallyBroken.has(n.id)) {
         issues.push({ level: "warning", msg: `"${n.label}" não converge para Fim` });
       }

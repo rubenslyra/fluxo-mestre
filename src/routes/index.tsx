@@ -3,6 +3,7 @@ import { Settings } from "lucide-react";
 import { useEffect, useState } from "react";
 import { FlowchartEditor } from "@/components/flowchart/FlowchartEditor";
 import { CriticalThinkingLab } from "@/components/flowchart/CriticalThinkingLab";
+import { SplashScreen } from "@/components/system/SplashScreen";
 import {
   APP_SETTINGS_CHANGED_EVENT,
   applyAppSettings,
@@ -26,10 +27,13 @@ export const Route = createFileRoute("/")({
 });
 
 type Mode = "editor" | "desafios";
+const SPLASH_ACK_KEY = "fluxolab-splash-ack-v1";
 
 function Index() {
   const [mode, setMode] = useState<Mode>("editor");
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [splashOpen, setSplashOpen] = useState(false);
+  const [splashReady, setSplashReady] = useState(false);
 
   useEffect(() => {
     const syncSettings = () => applyAppSettings(loadAppSettings());
@@ -39,9 +43,26 @@ function Index() {
   }, []);
 
   useEffect(() => {
+    const acknowledged = window.localStorage.getItem(SPLASH_ACK_KEY) === "1";
+    if (acknowledged) {
+      setSplashReady(true);
+      return;
+    }
+
+    setSplashOpen(true);
+    const readyTimer = window.setTimeout(() => setSplashReady(true), 1200);
+    return () => window.clearTimeout(readyTimer);
+  }, []);
+
+  useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     if (params.get("settings") === "1") setSettingsOpen(true);
   }, []);
+
+  const closeSplash = () => {
+    window.localStorage.setItem(SPLASH_ACK_KEY, "1");
+    setSplashOpen(false);
+  };
 
   return (
     <div className="flex h-screen w-full flex-col bg-background">
@@ -84,6 +105,7 @@ function Index() {
         {mode === "editor" ? <FlowchartEditor /> : <CriticalThinkingLab />}
       </div>
       <SettingsPanel open={settingsOpen} onClose={() => setSettingsOpen(false)} />
+      <SplashScreen open={splashOpen} ready={splashReady} onEnter={closeSplash} />
     </div>
   );
 }
