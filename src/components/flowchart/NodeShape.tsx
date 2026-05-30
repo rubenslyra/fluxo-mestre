@@ -200,16 +200,16 @@ function PortDot({
   return (
     <g transform={`translate(${cx}, ${cy})`}>
       <circle
-        r={14}
+        r={10}
         fill="transparent"
         style={{ cursor: "crosshair" }}
         onMouseDown={handleMouseDown}
       />
       <circle
-        r={8}
+        r={5}
         fill="var(--color-accent)"
         stroke="var(--color-node-stroke)"
-        strokeWidth={2}
+        strokeWidth={1}
         style={{ pointerEvents: "none" }}
       />
       {label && (
