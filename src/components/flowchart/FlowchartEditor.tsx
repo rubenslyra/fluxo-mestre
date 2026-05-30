@@ -1151,6 +1151,27 @@ export function FlowchartEditor() {
                   const edgeSelected = selectedEdge === e.id;
                   return (
                     <g key={e.id}>
+                      {/* Hit area (must be first so it's on top) */}
+                      <path
+                        d={d}
+                        fill="none"
+                        stroke="transparent"
+                        strokeWidth={12}
+                        onClick={(ev) => {
+                          ev.stopPropagation();
+                          setSelected(null);
+                          setSelectedIds([]);
+                          setSelectedEdge(e.id);
+                        }}
+                        onDoubleClick={(ev) => {
+                          ev.preventDefault();
+                          ev.stopPropagation();
+                          focusEdgeLabelEditor(e.id);
+                        }}
+                        style={{ cursor: "pointer", pointerEvents: "auto" }}
+                        pointerEvents="auto"
+                      />
+                      {/* Visual path */}
                       <path
                         d={d}
                         fill="none"
@@ -1165,6 +1186,7 @@ export function FlowchartEditor() {
                           (e.kind === "loop" || e.kind === "return") ? "6 4" : undefined
                         }
                         markerEnd="url(#arrow)"
+                        pointerEvents="none"
                       />
                       {e.label && (
                         <g transform={`translate(${mid.x}, ${mid.y})`}>
@@ -1189,24 +1211,6 @@ export function FlowchartEditor() {
                           </text>
                         </g>
                       )}
-                      <path
-                        d={d}
-                        fill="none"
-                        stroke="transparent"
-                        strokeWidth={12}
-                        onClick={(ev) => {
-                          ev.stopPropagation();
-                          setSelected(null);
-                          setSelectedIds([]);
-                          setSelectedEdge(e.id);
-                        }}
-                        onDoubleClick={(ev) => {
-                          ev.preventDefault();
-                          ev.stopPropagation();
-                          focusEdgeLabelEditor(e.id);
-                        }}
-                        style={{ cursor: "pointer" }}
-                      />
                     </g>
                   );
                 });
