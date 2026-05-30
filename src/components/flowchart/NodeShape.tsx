@@ -119,24 +119,18 @@ export function NodeShape({
         onMouseUp={onPortMouseUp}
       />
 
-      {/* Out port(s) */}
-      {isGroup ? null : isDecision ? (
+      {/* Out ports on all 4 sides */}
+      {!isGroup && (
         <>
-          <PortDot
-            cx={node.w / 2}
-            cy={0}
-            label="S"
-            onMouseDown={(e) => onPortMouseDown?.("out", e)}
-          />
-          <PortDot
-            cx={0}
-            cy={node.h / 2}
-            label="N"
-            onMouseDown={(e) => onPortMouseDown?.("out", e)}
-          />
+          {/* Top */}
+          <PortDot cx={0} cy={-node.h / 2} onMouseDown={(e) => onPortMouseDown?.("out", e)} />
+          {/* Right */}
+          <PortDot cx={node.w / 2} cy={0} onMouseDown={(e) => onPortMouseDown?.("out", e)} />
+          {/* Bottom */}
+          <PortDot cx={0} cy={node.h / 2} onMouseDown={(e) => onPortMouseDown?.("out", e)} />
+          {/* Left */}
+          <PortDot cx={-node.w / 2} cy={0} onMouseDown={(e) => onPortMouseDown?.("out", e)} />
         </>
-      ) : (
-        <PortDot cx={0} cy={node.h / 2} onMouseDown={(e) => onPortMouseDown?.("out", e)} />
       )}
     </g>
   );
