@@ -135,7 +135,7 @@ function normalizeDoc(value: unknown): FlowDoc {
 
 const EXPORT_PREFS_KEY = "flowchart-export-prefs-v1";
 type ExportFormat = "png" | "svg" | "pdf";
-type PendingEdge = { from: string; x: number; y: number };
+type PendingEdge = { from: string; x: number; y: number; curve?: number };
 
 function loadExportPrefs(): { format: ExportFormat; scale: number } {
   if (typeof window === "undefined") return { format: "png", scale: 2 };
@@ -1221,16 +1221,78 @@ export function FlowchartEditor() {
                 (() => {
                   const from = flowNodes.find((n) => n.id === pendingEdge.from);
                   if (!from) return null;
+
+                  // Calculate Bezier control points
+                  const dx = pendingEdge.x - from.x;
+                  const dy = pendingEdge.y - from.y;
+                  const len = Math.hypot(dx, dy) || 1;
+                  const perpX = -dy / len;
+                  const perpY = dx / len;
+
+                  const cp1x = from.x + (dx * 0.35) + perpX * (pendingEdge.curve ?? 0);
+                  const cp1y = from.y + (dy * 0.35) + perpY * (pendingEdge.curve ?? 0);
+                  const cp2x = pendingEdge.x - (dx * 0.35) + perpX * (pendingEdge.curve ?? 0);
+                  const cp2y = pendingEdge.y - (dy * 0.35) + perpY * (pendingEdge.curve ?? 0);
+
                   return (
-                    <line
-                      x1={from.x}
-                      y1={from.y}
-                      x2={pendingEdge.x}
-                      y2={pendingEdge.y}
-                      stroke="var(--color-accent)"
-                      strokeWidth={2}
-                      strokeDasharray="6 4"
-                    />
+                    <g>
+                      {/* Main pending edge line */}
+                      <line
+                        x1={from.x}
+                        y1={from.y}
+                        x2={pendingEdge.x}
+                        y2={pendingEdge.y}
+                        stroke="var(--color-accent)"
+                        strokeWidth={2}
+                        strokeDasharray="6 4"
+                      />
+
+                      {/* Helper lines to control points */}
+                      <line
+                        x1={from.x}
+                        y1={from.y}
+                        x2={cp1x}
+                        y2={cp1y}
+                        stroke="var(--color-accent)"
+                        strokeWidth={1}
+                        opacity={0.3}
+                        strokeDasharray="2 2"
+                        pointerEvents="none"
+                      />
+                      <line
+                        x1={pendingEdge.x}
+                        y1={pendingEdge.y}
+                        x2={cp2x}
+                        y2={cp2y}
+                        stroke="var(--color-accent)"
+                        strokeWidth={1}
+                        opacity={0.3}
+                        strokeDasharray="2 2"
+                        pointerEvents="none"
+                      />
+
+                      {/* Blue control point circles */}
+                      <circle
+                        cx={cp1x}
+                        cy={cp1y}
+                        r={8}
+                        fill="none"
+                        stroke="#3b82f6"
+                        strokeWidth={2}
+                        opacity={0.7}
+                        style={{ pointerEvents: "none" }}
+                      />
+                      <circle
+                        cx={cp2x}
+                        cy={cp2y}
+                        r={8}
+                        fill="none"
+                        stroke="#3b82f6"
+                        strokeWidth={2}
+                        opacity={0.7}
+                        style={{ pointerEvents: "none" }}
+                      />
+                    </g>
                   );
                 })()}
 
