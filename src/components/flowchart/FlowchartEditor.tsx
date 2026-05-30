@@ -17,7 +17,14 @@ import {
   normalizeSelectionBox,
   type SelectionBox,
 } from "./flowModel";
-import type { FlowDoc, FlowNode } from "./types";
+import type { FlowDoc, FlowNode, EdgeKind } from "./types";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { AiGeneratorPanel } from "./AiGeneratorPanel";
 import { CodeGeneratorPanel } from "./CodeGeneratorPanel";
 import { validateFlow } from "./validation";
@@ -1176,6 +1183,22 @@ export function FlowchartEditor() {
                 className="w-full resize-none rounded-md border border-input bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
                 rows={3}
               />
+              {selectedNode.kind === "group" && (
+                <>
+                  <label className="mb-1 mt-3 block text-xs font-medium">Cor do Grupo</label>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="color"
+                      value={selectedNode.color ?? "#FFA500"}
+                      onChange={(e) => updateNode(selectedNode.id, { color: e.target.value })}
+                      className="h-10 w-16 cursor-pointer rounded-md border border-input"
+                    />
+                    <span className="text-xs text-muted-foreground">
+                      {selectedNode.color ?? "Padrão (Laranja)"}
+                    </span>
+                  </div>
+                </>
+              )}
               <p className="mt-2 text-[11px] text-muted-foreground">
                 {SYMBOLS[selectedNode.kind].description}
               </p>
@@ -1231,8 +1254,56 @@ export function FlowchartEditor() {
                 placeholder="Ex: Sim, Não"
                 className="w-full rounded-md border border-input bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
               />
-              <p className="mt-2 text-[11px] text-muted-foreground">
-                Use o rótulo para indicar saídas de decisão ou condições de fluxo.
+              <label className="mb-1 mt-3 block text-xs font-medium">Tipo de Aresta</label>
+              <Select
+                value={selectedEdgeData.kind ?? "default"}
+                onValueChange={(val) => {
+                  setDocRaw((d) => ({
+                    ...d,
+                    edges: d.edges.map((e) =>
+                      e.id === selectedEdgeData.id ? { ...e, kind: val as EdgeKind } : e,
+                    ),
+                  }));
+                }}
+              >
+                <SelectTrigger className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="default">Padrão</SelectItem>
+                  <SelectItem value="true">Sim (true)</SelectItem>
+                  <SelectItem value="false">Não (false)</SelectItem>
+                  <SelectItem value="loop">Loop</SelectItem>
+                  <SelectItem value="return">Retorno</SelectItem>
+                </SelectContent>
+              </Select>
+              <label className="mb-1 mt-3 block text-xs font-medium">Saída do Nó</label>
+              <Select
+                value={selectedEdgeData.fromPort ?? "auto"}
+                onValueChange={(val) => {
+                  setDocRaw((d) => ({
+                    ...d,
+                    edges: d.edges.map((e) =>
+                      e.id === selectedEdgeData.id
+                        ? { ...e, fromPort: val === "auto" ? undefined : (val as any) }
+                        : e,
+                    ),
+                  }));
+                }}
+              >
+                <SelectTrigger className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="auto">Automática</SelectItem>
+                  <SelectItem value="top">Topo</SelectItem>
+                  <SelectItem value="right">Direita</SelectItem>
+                  <SelectItem value="bottom">Base</SelectItem>
+                  <SelectItem value="left">Esquerda</SelectItem>
+                </SelectContent>
+              </Select>
+              <p className="mt-3 text-[11px] text-muted-foreground">
+                Tipo e direção definem a renderização visual da aresta no fluxograma.
               </p>
             </div>
           )}

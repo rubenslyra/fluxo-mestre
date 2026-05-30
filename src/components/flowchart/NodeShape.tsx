@@ -41,8 +41,8 @@ export function NodeShape({
             width={node.w}
             height={node.h}
             rx={12}
-            fill="var(--color-background)"
-            fillOpacity={0.45}
+            fill={node.color ?? "var(--color-background)"}
+            fillOpacity={node.color ? 0.25 : 0.45}
             stroke={selected ? "var(--color-node-selected)" : "var(--color-accent)"}
             strokeWidth={selected ? 3 : 2}
             strokeDasharray="10 6"
