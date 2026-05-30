@@ -8,6 +8,7 @@ interface NodeShapeProps {
   onDoubleClick?: (e: React.MouseEvent) => void;
   onPortMouseDown?: (port: "out", e: React.MouseEvent) => void;
   onPortMouseUp?: () => void;
+  onResizeHandleMouseDown?: (handle: string, e: React.MouseEvent) => void;
 }
 
 export function NodeShape({
@@ -17,6 +18,7 @@ export function NodeShape({
   onDoubleClick,
   onPortMouseDown,
   onPortMouseUp,
+  onResizeHandleMouseDown,
 }: NodeShapeProps) {
   const path = getShapePath(node.kind, node.w, node.h);
   const isDecision = node.kind === "decision";
@@ -56,6 +58,20 @@ export function NodeShape({
             opacity={0.65}
             pointerEvents="none"
           />
+          {selected && (
+            <>
+              {/* Corner handles */}
+              <ResizeHandle cx={-node.w / 2 - 6} cy={-node.h / 2 - 6} handle="nw" onMouseDown={onResizeHandleMouseDown} />
+              <ResizeHandle cx={node.w / 2 + 6} cy={-node.h / 2 - 6} handle="ne" onMouseDown={onResizeHandleMouseDown} />
+              <ResizeHandle cx={node.w / 2 + 6} cy={node.h / 2 + 6} handle="se" onMouseDown={onResizeHandleMouseDown} />
+              <ResizeHandle cx={-node.w / 2 - 6} cy={node.h / 2 + 6} handle="sw" onMouseDown={onResizeHandleMouseDown} />
+              {/* Side handles */}
+              <ResizeHandle cx={0} cy={-node.h / 2 - 6} handle="n" onMouseDown={onResizeHandleMouseDown} />
+              <ResizeHandle cx={node.w / 2 + 6} cy={0} handle="e" onMouseDown={onResizeHandleMouseDown} />
+              <ResizeHandle cx={0} cy={node.h / 2 + 6} handle="s" onMouseDown={onResizeHandleMouseDown} />
+              <ResizeHandle cx={-node.w / 2 - 6} cy={0} handle="w" onMouseDown={onResizeHandleMouseDown} />
+            </>
+          )}
         </>
       ) : (
         <path
@@ -122,6 +138,51 @@ export function NodeShape({
       ) : (
         <PortDot cx={0} cy={node.h / 2} onMouseDown={(e) => onPortMouseDown?.("out", e)} />
       )}
+    </g>
+  );
+}
+
+function ResizeHandle({
+  cx,
+  cy,
+  handle,
+  onMouseDown,
+}: {
+  cx: number;
+  cy: number;
+  handle: string;
+  onMouseDown?: (handle: string, e: React.MouseEvent) => void;
+}) {
+  const handleMouseDown = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    onMouseDown?.(handle, e);
+  };
+
+  const cursorMap: Record<string, string> = {
+    nw: "nwse-resize",
+    n: "ns-resize",
+    ne: "nesw-resize",
+    e: "ew-resize",
+    se: "nwse-resize",
+    s: "ns-resize",
+    sw: "nesw-resize",
+    w: "ew-resize",
+  };
+
+  return (
+    <g transform={`translate(${cx}, ${cy})`}>
+      <rect
+        width={12}
+        height={12}
+        x={-6}
+        y={-6}
+        fill="var(--color-node-selected)"
+        stroke="var(--color-node)"
+        strokeWidth={1}
+        rx={2}
+        style={{ cursor: cursorMap[handle] ?? "default", pointerEvents: "auto" }}
+        onMouseDown={handleMouseDown}
+      />
     </g>
   );
 }

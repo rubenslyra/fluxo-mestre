@@ -216,6 +216,19 @@ export function FlowchartEditor() {
   const panRef = useRef<{ x: number; y: number; vx: number; vy: number } | null>(null);
   const selectionBoxRef = useRef<SelectionBox | null>(null);
   const pendingEdgeRef = useRef<PendingEdge | null>(null);
+  const resizeRef = useRef<{
+    nodeId: string;
+    handle: "nw" | "n" | "ne" | "e" | "se" | "s" | "sw" | "w";
+    startWorldX: number;
+    startWorldY: number;
+    startClientX: number;
+    startClientY: number;
+    initialWidth: number;
+    initialHeight: number;
+    initialX: number;
+    initialY: number;
+    committed: boolean;
+  } | null>(null);
   const docRef = useRef(doc);
   const viewRef = useRef(view);
   docRef.current = doc;
@@ -525,6 +538,92 @@ export function FlowchartEditor() {
     [commit, screenToWorld, updateNodes],
   );
 
+  const startResize = (nodeId: string, handle: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    const node = docRef.current.nodes.find((n) => n.id === nodeId);
+    if (!node) return;
+    const w = screenToWorld(e.clientX, e.clientY);
+    resizeRef.current = {
+      nodeId,
+      handle: handle as any,
+      startWorldX: w.x,
+      startWorldY: w.y,
+      startClientX: e.clientX,
+      startClientY: e.clientY,
+      initialWidth: node.w,
+      initialHeight: node.h,
+      initialX: node.x,
+      initialY: node.y,
+      committed: false,
+    };
+  };
+
+  const moveResizedNode = useCallback(
+    (clientX: number, clientY: number) => {
+      if (!resizeRef.current) return;
+      const resize = resizeRef.current;
+      if (!resize.committed) {
+        const distance = Math.hypot(clientX - resize.startClientX, clientY - resize.startClientY);
+        if (distance < 4) return;
+        commit();
+        resize.committed = true;
+      }
+      const w = screenToWorld(clientX, clientY);
+      const dx = w.x - resize.startWorldX;
+      const dy = w.y - resize.startWorldY;
+
+      let newW = resize.initialWidth;
+      let newH = resize.initialHeight;
+      let newX = resize.initialX;
+      let newY = resize.initialY;
+
+      switch (resize.handle) {
+        case "e":
+          newW = Math.max(80, resize.initialWidth + dx);
+          break;
+        case "w":
+          newW = Math.max(80, resize.initialWidth - dx);
+          newX = resize.initialX + dx / 2;
+          break;
+        case "s":
+          newH = Math.max(60, resize.initialHeight + dy);
+          break;
+        case "n":
+          newH = Math.max(60, resize.initialHeight - dy);
+          newY = resize.initialY + dy / 2;
+          break;
+        case "se":
+          newW = Math.max(80, resize.initialWidth + dx);
+          newH = Math.max(60, resize.initialHeight + dy);
+          break;
+        case "sw":
+          newW = Math.max(80, resize.initialWidth - dx);
+          newH = Math.max(60, resize.initialHeight + dy);
+          newX = resize.initialX + dx / 2;
+          break;
+        case "ne":
+          newW = Math.max(80, resize.initialWidth + dx);
+          newH = Math.max(60, resize.initialHeight - dy);
+          newY = resize.initialY + dy / 2;
+          break;
+        case "nw":
+          newW = Math.max(80, resize.initialWidth - dx);
+          newH = Math.max(60, resize.initialHeight - dy);
+          newX = resize.initialX + dx / 2;
+          newY = resize.initialY + dy / 2;
+          break;
+      }
+
+      newW = Math.round(newW / 8) * 8;
+      newH = Math.round(newH / 8) * 8;
+      newX = Math.round(newX / 8) * 8;
+      newY = Math.round(newY / 8) * 8;
+
+      updateNode(resize.nodeId, { w: newW, h: newH, x: newX, y: newY });
+    },
+    [commit, screenToWorld, updateNode],
+  );
+
   const handleMouseUp = useCallback(
     (clientX?: number, clientY?: number) => {
       if (selectionBoxRef.current) {
@@ -533,6 +632,7 @@ export function FlowchartEditor() {
       }
       finishPendingEdgeAt(clientX, clientY);
       dragRef.current = null;
+      resizeRef.current = null;
       panRef.current = null;
     },
     [finishPendingEdgeAt, finishSelectionBox],
@@ -542,6 +642,10 @@ export function FlowchartEditor() {
     const onMouseMove = (e: MouseEvent) => {
       if (selectionBoxRef.current) {
         updateSelectionBox(e.clientX, e.clientY);
+        return;
+      }
+      if (resizeRef.current) {
+        moveResizedNode(e.clientX, e.clientY);
         return;
       }
       if (dragRef.current) {
@@ -568,7 +672,7 @@ export function FlowchartEditor() {
       window.removeEventListener("mousemove", onMouseMove);
       window.removeEventListener("mouseup", onMouseUp);
     };
-  }, [handleMouseUp, moveDraggedNode, updatePendingEdgePoint, updateSelectionBox]);
+  }, [handleMouseUp, moveDraggedNode, moveResizedNode, updatePendingEdgePoint, updateSelectionBox]);
 
   const handleSvgMouseDown = (e: React.MouseEvent) => {
     if (e.button !== 0) return;
@@ -1024,6 +1128,9 @@ export function FlowchartEditor() {
                         e.preventDefault();
                         focusLabelEditor(n.id);
                       }}
+                      onResizeHandleMouseDown={
+                        n.kind === "group" ? (handle, e) => startResize(n.id, handle, e) : undefined
+                      }
                     />
                   </g>
                 );
@@ -1047,8 +1154,16 @@ export function FlowchartEditor() {
                       <path
                         d={d}
                         fill="none"
-                        stroke={edgeSelected ? "var(--color-node-selected)" : "var(--color-edge)"}
+                        stroke={
+                          e.kind === "true" ? "var(--color-success)" :
+                          e.kind === "false" ? "var(--color-danger)" :
+                          edgeSelected ? "var(--color-node-selected)" :
+                          "var(--color-edge)"
+                        }
                         strokeWidth={edgeSelected ? 3 : 2}
+                        strokeDasharray={
+                          (e.kind === "loop" || e.kind === "return") ? "6 4" : undefined
+                        }
                         markerEnd="url(#arrow)"
                       />
                       {e.label && (
@@ -1134,6 +1249,9 @@ export function FlowchartEditor() {
                       }}
                       onPortMouseDown={(_, e) => startEdge(n.id, e)}
                       onPortMouseUp={() => finishEdgeOn(n.id)}
+                      onResizeHandleMouseDown={
+                        n.kind === "group" ? (handle, e) => startResize(n.id, handle, e) : undefined
+                      }
                     />
                   </g>
                 );
