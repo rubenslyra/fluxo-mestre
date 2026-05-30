@@ -62,19 +62,54 @@ export function moveNodesTo(
   };
 }
 
-export function canConnectFlowNodes(doc: FlowDoc, edge: Pick<FlowEdge, "from" | "to" | "label">) {
+function hasPathBetween(doc: FlowDoc, from: string, to: string): boolean {
+  if (from === to) return true;
+
+  const visited = new Set<string>();
+  const queue = [from];
+
+  while (queue.length > 0) {
+    const current = queue.shift()!;
+    if (current === to) return true;
+    if (visited.has(current)) continue;
+    visited.add(current);
+
+    doc.edges
+      .filter((e) => e.from === current)
+      .forEach((e) => {
+        if (!visited.has(e.to)) queue.push(e.to);
+      });
+  }
+  return false;
+}
+
+export function canConnectFlowNodes(
+  doc: FlowDoc,
+  edge: Pick<FlowEdge, "from" | "to" | "label">,
+  forbidCycles: boolean = true,
+) {
   if (edge.from === edge.to) return false;
 
   const nodeIds = new Set(doc.nodes.map((node) => node.id));
   if (!nodeIds.has(edge.from) || !nodeIds.has(edge.to)) return false;
 
   const normalizedLabel = edge.label?.trim() || undefined;
-  return !doc.edges.some(
-    (existing) =>
-      existing.from === edge.from &&
-      existing.to === edge.to &&
-      (existing.label?.trim() || undefined) === normalizedLabel,
-  );
+  if (
+    doc.edges.some(
+      (existing) =>
+        existing.from === edge.from &&
+        existing.to === edge.to &&
+        (existing.label?.trim() || undefined) === normalizedLabel,
+    )
+  ) {
+    return false;
+  }
+
+  if (forbidCycles && hasPathBetween(doc, edge.to, edge.from)) {
+    return false;
+  }
+
+  return true;
 }
 
 export function connectFlowNodes(

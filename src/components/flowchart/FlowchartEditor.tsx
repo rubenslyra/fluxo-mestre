@@ -1420,8 +1420,58 @@ export function FlowchartEditor() {
                   <SelectItem value="left">Esquerda</SelectItem>
                 </SelectContent>
               </Select>
+              <label className="mb-1 mt-3 block text-xs font-medium">De Nó</label>
+              <Select
+                value={selectedEdgeData.from}
+                onValueChange={(val) => {
+                  if (val === selectedEdgeData.to) return;
+                  if (!canConnectFlowNodes(doc, { from: val, to: selectedEdgeData.to, label: selectedEdgeData.label }, true)) return;
+                  setDocRaw((d) => ({
+                    ...d,
+                    edges: d.edges.map((e) =>
+                      e.id === selectedEdgeData.id ? { ...e, from: val } : e,
+                    ),
+                  }));
+                }}
+              >
+                <SelectTrigger className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {doc.nodes.map((node) => (
+                    <SelectItem key={node.id} value={node.id}>
+                      {node.label} ({node.id})
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <label className="mb-1 mt-3 block text-xs font-medium">Para Nó</label>
+              <Select
+                value={selectedEdgeData.to}
+                onValueChange={(val) => {
+                  if (val === selectedEdgeData.from) return;
+                  if (!canConnectFlowNodes(doc, { from: selectedEdgeData.from, to: val, label: selectedEdgeData.label }, true)) return;
+                  setDocRaw((d) => ({
+                    ...d,
+                    edges: d.edges.map((e) =>
+                      e.id === selectedEdgeData.id ? { ...e, to: val } : e,
+                    ),
+                  }));
+                }}
+              >
+                <SelectTrigger className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {doc.nodes.map((node) => (
+                    <SelectItem key={node.id} value={node.id}>
+                      {node.label} ({node.id})
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
               <p className="mt-3 text-[11px] text-muted-foreground">
-                Tipo e direção definem a renderização visual da aresta no fluxograma.
+                Tipo e direção definem a renderização visual da aresta no fluxograma. Use "De Nó" e "Para Nó" para reconectar a aresta.
               </p>
             </div>
           )}
