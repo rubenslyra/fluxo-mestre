@@ -7,6 +7,7 @@ import {
   TAG_LABEL,
   type ObjectionTag,
 } from "./objectionTags";
+import { PROJECT_LICENSE } from "../../projectLicense";
 
 const STORAGE_KEY = "flowchart-challenges-progress-v1";
 const OBJ_OVERRIDE_KEY = "flowchart-objection-overrides-v1";
@@ -63,7 +64,7 @@ function exportPrintable(c: Challenge, objections: StudentObjection[], opts: Pri
     ? "page-break-before:always;"
     : "page-break-inside:avoid;";
   const html = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"/>
-<title>${escapeHtml(c.title)} — Material de aula</title>
+<title>${escapeHtml(c.title)} — Desafio de lógica aplicada</title>
 <style>
   @page { size: ${opts.paper}; margin: ${MARGIN_CSS[opts.margin]}; }
   body{font-family:Georgia,serif;color:#111;line-height:1.55}
@@ -102,7 +103,7 @@ ${objections
   })
   .join("")}
 
-<footer>FluxoLab · Material de apoio para aula · Imprima ou salve como PDF (Ctrl/Cmd+P)</footer>
+<footer>FluxoLab · Desafios de Lógica Aplicada · ${escapeHtml(PROJECT_LICENSE.shortName)} · uso não comercial</footer>
 <script>window.addEventListener('load',()=>setTimeout(()=>window.print(),300))</script>
 </body></html>`;
 
@@ -284,10 +285,14 @@ export function CriticalThinkingLab() {
       <aside className="h-72 w-full shrink-0 overflow-y-auto border-b border-border bg-card md:h-auto md:w-80 md:border-b-0 md:border-r">
         <div className="border-b border-border p-4">
           <h2 className="text-sm font-bold uppercase tracking-widest text-muted-foreground">
-            Desafios de Pensamento Lógico
+            Desafios de Lógica Aplicada
           </h2>
           <p className="mt-1 text-xs text-muted-foreground">
             {totalDone} de {CHALLENGES.length} concluídos · {filtered.length} no filtro
+          </p>
+          <p className="mt-2 text-xs leading-relaxed text-muted-foreground">
+            Casos para transformar regras em fluxogramas ISO 5807, validar decisões e preparar
+            artefatos de código.
           </p>
 
           <input

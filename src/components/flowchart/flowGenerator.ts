@@ -1,4 +1,5 @@
 import type { SymbolKind } from "./symbols";
+import type { EdgeKind } from "./types";
 
 export interface GeneratedFlow {
   title: string;
@@ -12,6 +13,7 @@ export interface GeneratedFlow {
     from: string;
     to: string;
     label?: string;
+    kind?: EdgeKind;
   }>;
 }
 
@@ -124,7 +126,7 @@ function buildGradeRegistrationFlow(inputs: RangedInput[]): GeneratedFlow {
     });
     edges.push({ from: manualId, to: decisionId });
     edges.push({ from: decisionId, to: errorId, label: "Nao" });
-    edges.push({ from: errorId, to: manualId });
+    edges.push({ from: errorId, to: manualId, kind: "return" });
 
     previousValidPath = decisionId;
   }
@@ -167,23 +169,23 @@ function buildGradeRegistrationFlow(inputs: RangedInput[]): GeneratedFlow {
   edges.push({ from: calculateId, to: registerId });
   edges.push({ from: registerId, to: displayId });
   edges.push({ from: displayId, to: advanceId });
-  edges.push({ from: advanceId, to: "n7" });
+  edges.push({ from: advanceId, to: "n7", kind: "loop" });
   edges.push({ from: "n7", to: manualSummaryId, label: "Nao" });
-  edges.push({ from: manualSummaryId, to: "n3" });
+  edges.push({ from: manualSummaryId, to: "n3", kind: "return" });
   edges.push({ from: "n5", to: seedDecisionId, label: "Nao" });
   edges.push({ from: seedDecisionId, to: seedId, label: "Sim" });
   edges.push({ from: seedId, to: seedCalcId });
   edges.push({ from: seedCalcId, to: seedStoreId });
   edges.push({ from: seedStoreId, to: seedSummaryId });
-  edges.push({ from: seedSummaryId, to: "n3" });
+  edges.push({ from: seedSummaryId, to: "n3", kind: "return" });
   edges.push({ from: seedDecisionId, to: helpDecisionId, label: "Nao" });
   edges.push({ from: helpDecisionId, to: helpId, label: "Sim" });
   edges.push({ from: helpId, to: referencesId });
-  edges.push({ from: referencesId, to: "n3" });
+  edges.push({ from: referencesId, to: "n3", kind: "return" });
   edges.push({ from: helpDecisionId, to: exitDecisionId, label: "Nao" });
   edges.push({ from: exitDecisionId, to: endId, label: "Sim" });
   edges.push({ from: exitDecisionId, to: invalidId, label: "Nao" });
-  edges.push({ from: invalidId, to: "n3" });
+  edges.push({ from: invalidId, to: "n3", kind: "return" });
 
   return {
     title: "Sistema de notas do modulo",
@@ -232,11 +234,11 @@ function codeToFlow(description: string): GeneratedFlow {
         { from: "n5", to: "n6" },
         { from: "n6", to: "n7" },
         { from: "n7", to: "n8" },
-        { from: "n8", to: "n3" },
+        { from: "n8", to: "n3", kind: "loop" },
         { from: "n3", to: "n9", label: "Nao" },
         { from: "n9", to: "n10", label: "Sim" },
         { from: "n10", to: "n11" },
-        { from: "n11", to: "n9" },
+        { from: "n11", to: "n9", kind: "loop" },
         { from: "n9", to: "n12", label: "Nao" },
       ],
     };
@@ -280,7 +282,7 @@ function genericFlow(description: string): GeneratedFlow {
     edges.push({ from: "n2", to: "n3" });
     edges.push({ from: "n3", to: "n4", label: "Sim" });
     edges.push({ from: "n4", to: "n5" });
-    edges.push({ from: "n5", to: "n3" });
+    edges.push({ from: "n5", to: "n3", kind: "loop" });
   }
 
   if (hasDecision) {

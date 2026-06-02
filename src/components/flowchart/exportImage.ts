@@ -1,5 +1,14 @@
-import { edgePath } from "./geometry";
+import { edgePath, edgePathToPoint } from "./geometry";
+import { documentBounds } from "./flowModel";
+import { PROJECT_LICENSE, PROJECT_NAME, PROJECT_VERSION } from "../../projectLicense";
 import { getShapePath } from "./symbols";
+import {
+  EXPORT_FONT_FAMILY,
+  PDF_FONT_RESOURCE,
+  formatNodeTextLines,
+  nodeTextBox,
+  resolveTextStyle,
+} from "./textStyle";
 import type { FlowDoc, FlowNode } from "./types";
 
 function escapeXml(value: string) {
@@ -36,39 +45,55 @@ function wrapSvgText(value: string, maxChars: number) {
 }
 
 function svgNodeLabel(node: FlowNode) {
-  const fontSize = 13;
-  const lines = wrapSvgText(node.label, Math.max(6, Math.floor((node.w - 16) / 7)));
-  const lineHeight = fontSize * 1.2;
+  const style = resolveTextStyle(node);
+  const fontSize = style.fontSize;
+  const fontFamily = escapeXml(EXPORT_FONT_FAMILY[style.fontFamily]);
+  const anchor = style.align === "left" ? "start" : style.align === "right" ? "end" : "middle";
+  const box = nodeTextBox(node);
+
+  if (node.kind === "group") {
+    const title =
+      formatNodeTextLines(node.label, "plain")
+        .map((line) => line.trim())
+        .filter(Boolean)
+        .join(" ") ||
+      node.name ||
+      "Grupo";
+    const x =
+      style.align === "left" ? box.x : style.align === "right" ? box.x + box.w : box.x + box.w / 2;
+    const y = box.y + box.h / 2 + fontSize * 0.35;
+    return `<text x="${x}" y="${y}" text-anchor="${anchor}" font-size="${fontSize}" font-weight="700" fill="#111" font-family="${fontFamily}">${escapeXml(title)}</text>`;
+  }
+
+  const maxChars = Math.max(6, Math.floor(box.w / (fontSize * 0.54)));
+  const lines = formatNodeTextLines(node.label, style.listStyle).flatMap((line) =>
+    wrapSvgText(line, maxChars),
+  );
+  const lineHeight = fontSize * style.lineHeight;
   const firstDy = -((lines.length - 1) * lineHeight) / 2 + fontSize * 0.35;
+  const x =
+    style.align === "left" ? box.x : style.align === "right" ? box.x + box.w : box.x + box.w / 2;
   const tspans = lines
     .map(
       (line, index) =>
-        `<tspan x="0" dy="${index === 0 ? firstDy : lineHeight}">${escapeXml(line)}</tspan>`,
+        `<tspan x="${x}" dy="${index === 0 ? firstDy : lineHeight}">${escapeXml(line)}</tspan>`,
     )
     .join("");
-  return `<text text-anchor="middle" font-size="${fontSize}" fill="#111" font-family="system-ui, sans-serif">${tspans}</text>`;
+  return `<text text-anchor="${anchor}" font-size="${fontSize}" fill="#111" font-family="${fontFamily}">${tspans}</text>`;
 }
 
 function buildStandaloneSvg(doc: FlowDoc, _innerHtml: string) {
-  const xs = doc.nodes.map((n) => n.x - n.w / 2);
-  const ys = doc.nodes.map((n) => n.y - n.h / 2);
-  const xe = doc.nodes.map((n) => n.x + n.w / 2);
-  const ye = doc.nodes.map((n) => n.y + n.h / 2);
-  const minX = Math.min(...xs) - 40;
-  const minY = Math.min(...ys) - 40;
-  const maxX = Math.max(...xe) + 40;
-  const maxY = Math.max(...ye) + 40;
-  const w = maxX - minX;
-  const h = maxY - minY;
+  const freePoints = doc.edges.flatMap((edge) => (edge.toPoint ? [edge.toPoint] : []));
+  const { minX, minY, w, h } = documentBounds(doc.nodes, 40, freePoints);
   const nodeMap = new Map(doc.nodes.map((node) => [node.id, node]));
   // arrow marker definition (since we strip <defs> indirectly when only #world is used)
   const defs = `<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#222"/></marker></defs>`;
   const edges = doc.edges
     .flatMap((edge) => {
       const from = nodeMap.get(edge.from);
-      const to = nodeMap.get(edge.to);
-      if (!from || !to) return [];
-      const { d, mid } = edgePath(from, to);
+      const to = edge.to ? nodeMap.get(edge.to) : null;
+      if (!from || (!to && !edge.toPoint)) return [];
+      const { d, mid } = to ? edgePath(from, to) : edgePathToPoint(from, edge.toPoint!);
       const label = edge.label
         ? `<g transform="translate(${mid.x} ${mid.y})"><rect x="-18" y="-10" width="36" height="18" rx="4" fill="white" stroke="#222"/><text text-anchor="middle" y="4" font-size="11" fill="#111">${escapeXml(edge.label)}</text></g>`
         : "";
@@ -79,6 +104,13 @@ function buildStandaloneSvg(doc: FlowDoc, _innerHtml: string) {
     .join("");
   const nodes = doc.nodes
     .map((node) => {
+      if (node.kind === "group") {
+        const x = -node.w / 2;
+        const y = -node.h / 2;
+        const fill = node.color ? escapeXml(node.color) : "white";
+        return `<g transform="translate(${node.x} ${node.y})"><rect x="${x}" y="${y}" width="${node.w}" height="${node.h}" rx="12" fill="${fill}" fill-opacity="${node.color ? "0.25" : "1"}" stroke="#222" stroke-width="2" stroke-dasharray="10 6"/><path d="M ${x + 20} ${y + 30} H ${node.w / 2 - 20}" fill="none" stroke="#222" stroke-width="1.5" stroke-dasharray="6 4"/>${svgNodeLabel(node)}</g>`;
+      }
+
       const path = getShapePath(node.kind, node.w, node.h);
       return `<g transform="translate(${node.x} ${node.y})"><path d="${path}" fill="white" stroke="#222" stroke-width="2"/>${svgNodeLabel(node)}</g>`;
     })
@@ -222,9 +254,9 @@ function buildPdf(
   pageHeight: number,
   image?: PdfImageAsset | null,
 ) {
-  const imageId = image ? 4 : null;
-  const firstPageId = image ? 5 : 4;
-  const objectCount = 3 + (image ? 1 : 0) + pages.length * 2;
+  const imageId = image ? 6 : null;
+  const firstPageId = image ? 7 : 6;
+  const objectCount = 5 + (image ? 1 : 0) + pages.length * 2;
   const objects = new Map<number, Uint8Array>();
   const kids = pages.map((_, index) => `${firstPageId + index * 2} 0 R`).join(" ");
 
@@ -233,6 +265,16 @@ function buildPdf(
   objects.set(
     3,
     asciiBytes("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>"),
+  );
+  objects.set(
+    4,
+    asciiBytes(
+      "<< /Type /Font /Subtype /Type1 /BaseFont /Times-Roman /Encoding /WinAnsiEncoding >>",
+    ),
+  );
+  objects.set(
+    5,
+    asciiBytes("<< /Type /Font /Subtype /Type1 /BaseFont /Courier /Encoding /WinAnsiEncoding >>"),
   );
 
   if (image && imageId) {
@@ -258,7 +300,7 @@ function buildPdf(
       pageId,
       asciiBytes(
         `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${pageWidth} ${pageHeight}] ` +
-          `/Resources << /Font << /F1 3 0 R >> ${xObjectResource}>> /Contents ${contentId} 0 R >>`,
+          `/Resources << /Font << /F1 3 0 R /F2 4 0 R /F3 5 0 R >> ${xObjectResource}>> /Contents ${contentId} 0 R >>`,
       ),
     );
     objects.set(
@@ -312,7 +354,7 @@ const PDF_BRAND = {
   paper: "1 1 1",
 };
 
-const SYSTEM_VERSION = "FluxoLab v0.1.0";
+const SYSTEM_VERSION = `${PROJECT_NAME} v${PROJECT_VERSION}`;
 
 function nextDocumentId() {
   const date = new Date();
@@ -394,30 +436,54 @@ function drawTextLine(
   y: number,
   fontSize: number,
   align: "left" | "center" | "right" = "left",
+  fontResource: "F1" | "F2" | "F3" = "F1",
 ) {
   const safe = escapePdfText(text);
   const width = safe.length * fontSize * 0.52;
   const tx = align === "center" ? x - width / 2 : align === "right" ? x - width : x;
-  return `BT /F1 ${pdfNumber(fontSize)} Tf ${pdfNumber(tx)} ${pdfNumber(y)} Td (${safe}) Tj ET`;
+  return `BT /${fontResource} ${pdfNumber(fontSize)} Tf ${pdfNumber(tx)} ${pdfNumber(y)} Td (${safe}) Tj ET`;
 }
 
-function drawCenteredText(
-  text: string,
-  cx: number,
-  cy: number,
-  maxWidth: number,
-  maxHeight: number,
-) {
-  let fontSize = 10;
-  let lines = wrapText(text, Math.max(6, Math.floor(maxWidth / (fontSize * 0.52))));
-  while (lines.length * fontSize * 1.15 > maxHeight && fontSize > 7) {
+function drawNodeText(node: FlowNode, cx: number, cy: number, scale: number) {
+  const style = resolveTextStyle(node);
+  const fontResource = PDF_FONT_RESOURCE[style.fontFamily];
+  const box = nodeTextBox(node);
+  const maxWidth = box.w * scale;
+  const maxHeight = box.h * scale;
+  let fontSize = Math.min(style.fontSize, 16);
+  const textLines =
+    node.kind === "group"
+      ? [
+          formatNodeTextLines(node.label, "plain")
+            .map((line) => line.trim())
+            .filter(Boolean)
+            .join(" ") ||
+            node.name ||
+            "Grupo",
+        ]
+      : formatNodeTextLines(node.label, style.listStyle);
+  let lines = textLines.flatMap((line) =>
+    wrapText(line, Math.max(6, Math.floor(maxWidth / (fontSize * 0.52)))),
+  );
+  while (lines.length * fontSize * style.lineHeight > maxHeight && fontSize > 7) {
     fontSize -= 1;
-    lines = wrapText(text, Math.max(6, Math.floor(maxWidth / (fontSize * 0.52))));
+    lines = textLines.flatMap((line) =>
+      wrapText(line, Math.max(6, Math.floor(maxWidth / (fontSize * 0.52)))),
+    );
   }
-  const lineHeight = fontSize * 1.15;
-  const firstY = cy + ((lines.length - 1) * lineHeight) / 2 - fontSize * 0.35;
+  const lineHeight = fontSize * style.lineHeight;
+  const anchorX =
+    style.align === "left"
+      ? cx + box.x * scale
+      : style.align === "right"
+        ? cx + (box.x + box.w) * scale
+        : cx + (box.x + box.w / 2) * scale;
+  const anchorY = cy - (box.y + box.h / 2) * scale;
+  const firstY = anchorY + ((lines.length - 1) * lineHeight) / 2 - fontSize * 0.35;
   return lines
-    .map((line, index) => drawTextLine(line, cx, firstY - index * lineHeight, fontSize, "center"))
+    .map((line, index) =>
+      drawTextLine(line, anchorX, firstY - index * lineHeight, fontSize, style.align, fontResource),
+    )
     .join("\n");
 }
 
@@ -702,6 +768,7 @@ function drawFooter(pageWidth: number, marginX: number, page: number, pageCount:
       y + 15,
     )} l S Q`,
     `q ${PDF_BRAND.muted} rg ${drawTextLine(SYSTEM_VERSION, marginX, y, 8, "left")} Q`,
+    `q ${PDF_BRAND.muted} rg ${drawTextLine(PROJECT_LICENSE.shortName, pageWidth / 2, y, 8, "center")} Q`,
     `q ${PDF_BRAND.muted} rg ${drawTextLine(`Pagina ${page} de ${pageCount}`, pageWidth - marginX, y, 8, "right")} Q`,
   ].join("\n");
 }
@@ -743,15 +810,8 @@ function paginateWithoutCuttingNodes(
 }
 
 function buildPdfPages(doc: FlowDoc, documentId: string, logo?: PdfImageAsset | null) {
-  const xs = doc.nodes.map((n) => n.x - n.w / 2);
-  const ys = doc.nodes.map((n) => n.y - n.h / 2);
-  const xe = doc.nodes.map((n) => n.x + n.w / 2);
-  const ye = doc.nodes.map((n) => n.y + n.h / 2);
-  const minX = Math.min(...xs) - 40;
-  const minY = Math.min(...ys) - 40;
-  const maxX = Math.max(...xe) + 40;
-  const maxY = Math.max(...ye) + 40;
-  const sourceWidth = maxX - minX;
+  const freePoints = doc.edges.flatMap((edge) => (edge.toPoint ? [edge.toPoint] : []));
+  const { minX, minY, maxY, w: sourceWidth } = documentBounds(doc.nodes, 40, freePoints);
 
   const pageWidth = 841.89;
   const pageHeight = 595.28;
@@ -785,9 +845,9 @@ function buildPdfPages(doc: FlowDoc, documentId: string, logo?: PdfImageAsset | 
 
     for (const edge of doc.edges) {
       const from = nodeMap.get(edge.from);
-      const to = nodeMap.get(edge.to);
-      if (!from || !to) continue;
-      const { d, mid } = edgePath(from, to);
+      const to = edge.to ? nodeMap.get(edge.to) : null;
+      if (!from || (!to && !edge.toPoint)) continue;
+      const { d, mid } = to ? edgePath(from, to) : edgePathToPoint(from, edge.toPoint!);
       const converted = svgPathToPdfPath(d, tf);
       ops.push(converted.path, "S", drawArrow(converted.previous, converted.current));
       if (edge.label) {
@@ -803,17 +863,28 @@ function buildPdfPages(doc: FlowDoc, documentId: string, logo?: PdfImageAsset | 
       const center = transformPoint({ x: node.x, y: node.y }, tf);
       const w = node.w * scale;
       const h = node.h * scale;
+      if (node.kind === "group") {
+        const x = center.x - w / 2;
+        const y = center.y - h / 2;
+        const top = y + h;
+        const groupShape = roundedRectPath(x, y, w, h, 12 * scale);
+        const titleRule = `${pdfNumber(x + 20 * scale)} ${pdfNumber(top - 30 * scale)} m ${pdfNumber(
+          x + w - 20 * scale,
+        )} ${pdfNumber(top - 30 * scale)} l`;
+        ops.push(
+          "q 1 1 1 rg 0 0 0 RG 1 w [10 6] 0 d",
+          groupShape,
+          "B",
+          "[6 4] 0 d",
+          titleRule,
+          "S Q",
+        );
+        ops.push(drawNodeText(node, center.x, center.y, scale));
+        continue;
+      }
       const shape = nodeShapePath(node, center.x, center.y, scale);
       ops.push("q 1 1 1 rg 0 0 0 RG 1 w", shape, node.kind === "predefined" ? "S Q" : "B Q");
-      ops.push(
-        drawCenteredText(
-          node.label,
-          center.x,
-          center.y,
-          Math.max(20, w - 16),
-          Math.max(12, h - 10),
-        ),
-      );
+      ops.push(drawNodeText(node, center.x, center.y, scale));
     }
 
     ops.push("Q");

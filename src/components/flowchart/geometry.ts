@@ -1,7 +1,17 @@
-import type { FlowNode } from "./types";
+import type { EdgeKind, FlowNode, FlowPoint, PortSide } from "./types";
 
-// Pick the best side (top/right/bottom/left) of a node to exit toward a target point
-type Side = "top" | "right" | "bottom" | "left";
+type Side = PortSide;
+
+export interface EdgeRouteOptions {
+  /** Force the exit side of the source node. */
+  fromSide?: Side;
+  /** Force the entry side of the target node. */
+  toSide?: Side;
+  /** Perpendicular bow applied to the path, in world units. 0 keeps it orthogonal. */
+  curve?: number;
+  /** Semantic kind — loop/return edges are routed as explicit side returns. */
+  kind?: EdgeKind;
+}
 
 function sideAnchor(node: FlowNode, side: Side): { x: number; y: number } {
   const hw = node.w / 2;
@@ -30,20 +40,33 @@ function chooseSides(from: FlowNode, to: FlowNode): { fs: Side; ts: Side } {
   return { fs: "left", ts: "right" };
 }
 
-// Orthogonal path with rounded corners
-export function edgePath(
-  from: FlowNode,
-  to: FlowNode,
+function isVertical(side: Side) {
+  return side === "top" || side === "bottom";
+}
+
+// Outward unit normal for a given side (points away from the node).
+function sideNormal(side: Side): { x: number; y: number } {
+  switch (side) {
+    case "top":
+      return { x: 0, y: -1 };
+    case "bottom":
+      return { x: 0, y: 1 };
+    case "left":
+      return { x: -1, y: 0 };
+    case "right":
+      return { x: 1, y: 0 };
+  }
+}
+
+function orthogonalPath(
+  a: { x: number; y: number },
+  b: { x: number; y: number },
+  fs: Side,
+  ts: Side,
 ): { d: string; mid: { x: number; y: number } } {
-  const { fs, ts } = chooseSides(from, to);
-  const a = sideAnchor(from, fs);
-  const b = sideAnchor(to, ts);
-
   const points: { x: number; y: number }[] = [a];
-
-  // Build orthogonal waypoints based on exit/entry sides
-  const fromVertical = fs === "top" || fs === "bottom";
-  const toVertical = ts === "top" || ts === "bottom";
+  const fromVertical = isVertical(fs);
+  const toVertical = isVertical(ts);
 
   if (fromVertical && toVertical) {
     const my = (a.y + b.y) / 2;
@@ -104,7 +127,196 @@ export function edgePath(
   return { d, mid };
 }
 
+function polylinePath(points: Array<{ x: number; y: number }>): {
+  d: string;
+  mid: { x: number; y: number };
+} {
+  const safePoints = points.length ? points : [{ x: 0, y: 0 }];
+  const d = safePoints
+    .map((point, index) => `${index === 0 ? "M" : "L"} ${point.x} ${point.y}`)
+    .join(" ");
+
+  let total = 0;
+  const segs: number[] = [];
+  for (let i = 1; i < safePoints.length; i++) {
+    const l = Math.hypot(
+      safePoints[i].x - safePoints[i - 1].x,
+      safePoints[i].y - safePoints[i - 1].y,
+    );
+    segs.push(l);
+    total += l;
+  }
+
+  let target = total / 2;
+  let mid = { ...safePoints[0] };
+  for (let i = 0; i < segs.length; i++) {
+    if (target <= segs[i]) {
+      const t = segs[i] === 0 ? 0 : target / segs[i];
+      mid = {
+        x: safePoints[i].x + (safePoints[i + 1].x - safePoints[i].x) * t,
+        y: safePoints[i].y + (safePoints[i + 1].y - safePoints[i].y) * t,
+      };
+      break;
+    }
+    target -= segs[i];
+  }
+
+  return { d, mid };
+}
+
+function returnPath(
+  from: FlowNode,
+  to: FlowNode,
+  curve: number,
+  fromSide?: Side,
+  toSide?: Side,
+): { d: string; mid: { x: number; y: number } } {
+  const side: Side = fromSide ?? toSide ?? (to.x < from.x ? "left" : "right");
+  const entrySide: Side = toSide ?? side;
+  const a = sideAnchor(from, side);
+  const b = sideAnchor(to, entrySide);
+  const sideSign = side === "left" ? -1 : 1;
+  const fromEdgeX = from.x + sideSign * (from.w / 2);
+  const toEdgeX = to.x + sideSign * (to.w / 2);
+  const outerX =
+    side === "left"
+      ? Math.min(fromEdgeX, toEdgeX) - 56 - Math.abs(curve)
+      : Math.max(fromEdgeX, toEdgeX) + 56 + Math.abs(curve);
+
+  return polylinePath([a, { x: outerX, y: a.y }, { x: outerX, y: b.y }, b]);
+}
+
+// Smooth cubic arc that bows perpendicular to the straight line, used for parallel
+// edges (fan-out) so crossing lines stay readable.
+function curvedPath(
+  a: { x: number; y: number },
+  b: { x: number; y: number },
+  fs: Side,
+  ts: Side,
+  curve: number,
+): { d: string; mid: { x: number; y: number } } {
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  const len = Math.hypot(dx, dy) || 1;
+  // Perpendicular unit vector to the chord.
+  let nx = -dy / len;
+  let ny = dx / len;
+  // Bias the bow toward the natural exit direction so it leaves the node cleanly.
+  const fn = sideNormal(fs);
+  if (nx * fn.x + ny * fn.y < 0) {
+    nx = -nx;
+    ny = -ny;
+  }
+  const bow = curve;
+
+  // Pull control points outward along the exit/entry normals plus the perpendicular bow,
+  // which keeps the tangents aligned with the ports and avoids kinks.
+  const tn = sideNormal(ts);
+  const reach = Math.min(Math.max(len * 0.35, 24), 90);
+  const c1 = {
+    x: a.x + fn.x * reach + nx * bow,
+    y: a.y + fn.y * reach + ny * bow,
+  };
+  const c2 = {
+    x: b.x + tn.x * reach + nx * bow,
+    y: b.y + tn.y * reach + ny * bow,
+  };
+
+  const d = `M ${a.x} ${a.y} C ${c1.x} ${c1.y} ${c2.x} ${c2.y} ${b.x} ${b.y}`;
+  // Point on the cubic at t = 0.5 for label placement.
+  const mid = {
+    x: 0.125 * a.x + 0.375 * c1.x + 0.375 * c2.x + 0.125 * b.x,
+    y: 0.125 * a.y + 0.375 * c1.y + 0.375 * c2.y + 0.125 * b.y,
+  };
+  return { d, mid };
+}
+
+// Orthogonal path with rounded corners, a straight side return for back-edges,
+// or a smooth arc for parallel forward edges.
+export function edgePath(
+  from: FlowNode,
+  to: FlowNode,
+  opts: EdgeRouteOptions = {},
+): { d: string; mid: { x: number; y: number } } {
+  const auto = chooseSides(from, to);
+  const fs = opts.fromSide ?? auto.fs;
+  const ts = opts.toSide ?? auto.ts;
+  const a = sideAnchor(from, fs);
+  const b = sideAnchor(to, ts);
+
+  const isBack = opts.kind === "loop" || opts.kind === "return";
+  const curve = opts.curve ?? (isBack ? 16 : 0);
+
+  if (isBack) {
+    return returnPath(from, to, curve, opts.fromSide, opts.toSide);
+  }
+
+  if (curve === 0) {
+    return orthogonalPath(a, b, fs, ts);
+  }
+  return curvedPath(a, b, fs, ts, curve);
+}
+
+export function edgePathToPoint(
+  from: FlowNode,
+  to: FlowPoint,
+  opts: EdgeRouteOptions = {},
+): { d: string; mid: FlowPoint } {
+  return edgePath(
+    from,
+    {
+      id: "__free_endpoint__",
+      kind: "connector",
+      x: to.x,
+      y: to.y,
+      w: 0,
+      h: 0,
+      label: "",
+    },
+    opts,
+  );
+}
+
+/**
+ * Computes a perpendicular bow offset per edge so that overlapping/parallel
+ * connections and back-edges fan out instead of tangling. Returns a map keyed by
+ * edge id. Loop/return edges always get a bow; straight forward edges only get one
+ * when several share the same node pair.
+ */
+export function computeEdgeCurves(
+  edges: Array<{ id: string; from: string; to?: string; toPoint?: FlowPoint; kind?: EdgeKind }>,
+): Map<string, number> {
+  const result = new Map<string, number>();
+  const groups = new Map<string, typeof edges>();
+  for (const edge of edges) {
+    // Group by unordered pair so A->B and B->A fan out together.
+    const target = edge.to ?? `point:${edge.toPoint?.x ?? 0},${edge.toPoint?.y ?? 0}`;
+    const key = [edge.from, target].sort().join(" ");
+    const list = groups.get(key) ?? [];
+    list.push(edge);
+    groups.set(key, list);
+  }
+
+  for (const list of groups.values()) {
+    list.forEach((edge, index) => {
+      const back = edge.kind === "loop" || edge.kind === "return";
+      if (list.length === 1) {
+        result.set(edge.id, back ? 16 : 0);
+        return;
+      }
+      // Fan parallel edges symmetrically: -1, +1, -2, +2 ... times a base step.
+      const step = 12;
+      const rank = Math.ceil((index + 1) / 2);
+      const sign = index % 2 === 0 ? -1 : 1;
+      const base = back ? 16 : 0;
+      result.set(edge.id, base + sign * rank * step);
+    });
+  }
+
+  return result;
+}
+
 // kept for backward compat (not used anymore)
-export function anchorPoint(node: FlowNode, tx: number, ty: number) {
+export function anchorPoint(node: FlowNode, _tx: number, _ty: number) {
   return { x: node.x, y: node.y };
 }

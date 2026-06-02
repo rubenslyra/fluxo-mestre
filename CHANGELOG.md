@@ -1,5 +1,37 @@
 # Notas de Versão
 
+## 0.2.0 - Fluxo estruturado, release comunitária e limpeza profunda
+
+Data: 2026-06-02
+
+### Adicionado
+
+- Arestas tipadas para fluxo padrão, caminhos verdadeiro/falso, laços e retornos.
+- Portas de conexão nos quatro lados dos nós, com indicadores visuais menores e suporte a reconexão.
+- Curvas automáticas para arestas paralelas, fan-out, retornos e endpoints livres.
+- Agrupadores como regiões semânticas usadas por validação, geração de código e exportações.
+- Inspector de texto dos nós com alinhamento, fonte, tamanho, entrelinha e formato de lista.
+- Aba "Boas Práticas" com documentações oficiais e livros técnicos recomendados.
+- Metadados públicos de versão e licença em exportações, HTML e cabeçalhos do app.
+
+### Alterado
+
+- Geradores de código reestruturados para emitir controle de fluxo mais fiel ao desenho.
+- README reorganizado para refletir a release atual, comandos de validação e publicação.
+- Licença do projeto alinhada para `CC-BY-NC-SA-4.0`.
+- Dependências e componentes de UI removidos quando não usados pelo aplicativo.
+- `package.json` alinhado para a versão `0.2.0`.
+
+### Removido
+
+- Componentes UI não utilizados, lockfile npm antigo, configuração Wrangler e imagens de exemplo pesadas fora do fluxo público.
+
+### Validação
+
+- `bun run test`
+- `bunx tsc --noEmit`
+- `bun run lint`
+
 ## 0.1.1 - Publicação estática e limpeza pública
 
 Data: 2026-05-28

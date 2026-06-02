@@ -1,8 +1,37 @@
+import { buildControlFlow, collectCFIds, type CFNode } from "./controlFlow";
 import { SYMBOLS } from "./symbols";
 import type { FlowDoc, FlowNode } from "./types";
 
 export type CodeLanguage = "python" | "csharp" | "java" | "javascript" | "cpp";
 export type CodeBlueprintId = "procedural" | "template-method" | "strategy" | "command-pipeline";
+export type ArtifactKind = "code" | "uml" | "database";
+
+export interface GenerationMetadata {
+  title: string;
+  briefDescription: string;
+  comments?: string;
+}
+
+export interface GenerateCodeOptions {
+  language: CodeLanguage;
+  blueprint: CodeBlueprintId;
+  metadata?: Partial<GenerationMetadata>;
+}
+
+export interface GenerateArtifactOptions {
+  artifact: ArtifactKind;
+  language: CodeLanguage;
+  blueprint: CodeBlueprintId;
+  metadata: GenerationMetadata;
+}
+
+export type CodeSuggestionSeverity = "success" | "info" | "warning";
+
+export type CodeSuggestion = {
+  title: string;
+  detail: string;
+  severity: CodeSuggestionSeverity;
+};
 
 export const CODE_LANGUAGES: Array<{ id: CodeLanguage; label: string; fileName: string }> = [
   { id: "python", label: "Python", fileName: "fluxolab_flow.py" },
@@ -39,6 +68,28 @@ export const CODE_BLUEPRINTS: Array<{
   },
 ];
 
+export const ARTIFACT_TARGETS: Array<{
+  id: ArtifactKind;
+  label: string;
+  summary: string;
+}> = [
+  {
+    id: "code",
+    label: "Código",
+    summary: "Classe, funções ou pipeline a partir dos símbolos do fluxograma.",
+  },
+  {
+    id: "uml",
+    label: "UML",
+    summary: "Diagrama PlantUML com estados, transições e rótulos de decisão.",
+  },
+  {
+    id: "database",
+    label: "SQL",
+    summary: "Modelo relacional para persistir fluxo, passos e transições.",
+  },
+];
+
 export const CODE_REFERENCE_LINKS = [
   "Refactoring.Guru: Template Method, Strategy e Command",
   "Microsoft Learn: Design Patterns - Template Method",
@@ -47,25 +98,53 @@ export const CODE_REFERENCE_LINKS = [
   "Martin Fowler: arquitetura evolutiva e separação de domínio/dados/apresentação",
 ];
 
+type CodeGroup = {
+  id: string;
+  name: string;
+  stepIds: string[];
+};
+
 type CodeModel = {
   title: string;
+  briefDescription: string;
+  comments: string;
+  namespace: string;
+  packageName: string;
+  cppNamespace: string;
+  schemaName: string;
+  className: string;
+  moduleName: string;
+  flowKey: string;
   steps: CodeStep[];
   decisions: CodeStep[];
+  transitions: CodeTransition[];
+  /** Structured control flow (sequence / if-else / while) recovered from the graph. */
+  controlFlow: CFNode[];
+  stepsByNodeId: Map<string, CodeStep>;
+  groups: CodeGroup[];
+  isDecision: (nodeId: string) => boolean;
 };
 
 type CodeStep = {
+  nodeId: string;
   index: number;
   label: string;
   kindName: string;
   methodName: string;
   constantName: string;
+  isDecision: boolean;
+  /** Name of the grouping container this step belongs to, if any. */
+  groupName?: string;
 };
 
-export function generateCode(
-  doc: FlowDoc,
-  options: { language: CodeLanguage; blueprint: CodeBlueprintId },
-) {
-  const model = createCodeModel(doc);
+type CodeTransition = {
+  from: CodeStep;
+  to: CodeStep;
+  label?: string;
+};
+
+export function generateCode(doc: FlowDoc, options: GenerateCodeOptions) {
+  const model = createCodeModel(doc, options.metadata);
   if (options.language === "python") return generatePython(model, options.blueprint);
   if (options.language === "csharp") return generateCSharp(model, options.blueprint);
   if (options.language === "java") return generateJava(model, options.blueprint);
@@ -73,23 +152,276 @@ export function generateCode(
   return generateCpp(model, options.blueprint);
 }
 
-function createCodeModel(doc: FlowDoc): CodeModel {
-  const orderedNodes = orderNodes(doc);
-  const steps = orderedNodes.map((node, index) => {
+export function generateArtifact(doc: FlowDoc, options: GenerateArtifactOptions) {
+  if (options.artifact === "uml") return generateUml(createCodeModel(doc, options.metadata));
+  if (options.artifact === "database") {
+    return generateDatabaseScript(createCodeModel(doc, options.metadata));
+  }
+  return generateCode(doc, {
+    language: options.language,
+    blueprint: options.blueprint,
+    metadata: options.metadata,
+  });
+}
+
+export function getArtifactFileName(
+  artifact: ArtifactKind,
+  options: { language: CodeLanguage; metadata: Partial<GenerationMetadata> },
+) {
+  const title = normalizeMetadata(options.metadata).title;
+  const base = makeIdentifier(title) || "fluxolab_flow";
+  const className = makeClassName(title);
+
+  if (artifact === "uml") return `${base}.puml`;
+  if (artifact === "database") return `${base}.sql`;
+
+  if (options.language === "python") return `${base}.py`;
+  if (options.language === "csharp") return `${className}.cs`;
+  if (options.language === "java") return `${className}.java`;
+  if (options.language === "javascript") return `${base}.js`;
+  return `${base}.cpp`;
+}
+
+export function analyzeFlowForCodeSuggestions(doc: FlowDoc): CodeSuggestion[] {
+  const nodes = doc.nodes.filter((node) => node.kind !== "group");
+  const groups = doc.nodes.filter((node) => node.kind === "group");
+  const connectedTargetIds = new Set(doc.edges.flatMap((edge) => (edge.to ? [edge.to] : [])));
+  const connectedSourceIds = new Set(doc.edges.map((edge) => edge.from));
+  const danglingEdges = doc.edges.filter((edge) => !edge.to).length;
+  const decisions = nodes.filter((node) => node.kind === "decision");
+  const loopEdges = doc.edges.filter((edge) => edge.kind === "loop" || edge.kind === "return");
+  const namedNodes = nodes.filter((node) => node.name?.trim());
+  const namedGroups = groups.filter((node) => node.name?.trim());
+  const nonTerminalNodes = nodes.filter((node) => node.kind !== "terminator");
+  const disconnectedNodes = nodes.filter(
+    (node) => !connectedSourceIds.has(node.id) && !connectedTargetIds.has(node.id),
+  );
+  const decisionOutcomeCount = new Map<string, Set<string>>();
+
+  for (const edge of doc.edges) {
+    if (!edge.label || !decisions.some((node) => node.id === edge.from)) continue;
+    const outcomes = decisionOutcomeCount.get(edge.from) ?? new Set<string>();
+    outcomes.add(edge.label.trim().toLowerCase());
+    decisionOutcomeCount.set(edge.from, outcomes);
+  }
+
+  const suggestions: CodeSuggestion[] = [];
+
+  if (nodes.length === 0) {
+    return [
+      {
+        title: "Modele pelo menos um fluxo executável",
+        detail:
+          "Os agrupadores ajudam a organizar arquitetura, mas o gerador precisa de símbolos de início, processo, decisão ou fim para criar código.",
+        severity: "warning",
+      },
+    ];
+  }
+
+  if (groups.length > 0) {
+    suggestions.push({
+      title: "Agrupadores prontos para virar módulos",
+      detail:
+        namedGroups.length === groups.length
+          ? "Os nomes técnicos dos agrupadores podem orientar camadas, casos de uso, bounded contexts ou módulos no próximo refinamento."
+          : "Preencha o nome técnico dos agrupadores principais para transformar grupos visuais em nomes de módulos, camadas ou contextos.",
+      severity: namedGroups.length === groups.length ? "success" : "info",
+    });
+  } else if (nodes.length >= 6) {
+    suggestions.push({
+      title: "Considere separar responsabilidades",
+      detail:
+        "Fluxos com muitos passos ficam mais fáceis de evoluir quando partes coesas são colocadas em agrupadores nomeados.",
+      severity: "info",
+    });
+  }
+
+  if (namedNodes.length < Math.min(nonTerminalNodes.length, 3)) {
+    suggestions.push({
+      title: "Use nomes técnicos nos passos centrais",
+      detail:
+        "O rótulo continua livre para explicar a regra no desenho; o nome técnico melhora métodos, constantes e classes geradas.",
+      severity: "info",
+    });
+  }
+
+  if (decisions.length >= 2) {
+    suggestions.push({
+      title: "Decisões indicam políticas de negócio",
+      detail:
+        "Com duas ou mais decisões, Strategy ou Template Method tendem a deixar regras substituíveis sem misturar a leitura do fluxo.",
+      severity: "info",
+    });
+  } else if (decisions.length === 1) {
+    suggestions.push({
+      title: "Decisão simples detectada",
+      detail:
+        "Um blueprint procedural limpo costuma ser suficiente; rotule as saídas Sim/Não para preservar a intenção no código.",
+      severity: "success",
+    });
+  }
+
+  const decisionsWithTwoOutcomes = decisions.filter((node) => {
+    const outcomes = decisionOutcomeCount.get(node.id);
+    return outcomes && outcomes.size >= 2;
+  }).length;
+  if (decisions.length > 0 && decisionsWithTwoOutcomes < decisions.length) {
+    suggestions.push({
+      title: "Complete os rótulos das decisões",
+      detail:
+        "Cada losango deve ter saídas identificáveis. Isso melhora a leitura do PlantUML, dos testes e dos comentários gerados.",
+      severity: "warning",
+    });
+  }
+
+  if (loopEdges.length > 0) {
+    suggestions.push({
+      title: "Laços exigem condição de parada",
+      detail:
+        "Há conexões de retorno no fluxo. Revise inicialização, incremento e caminho de saída antes de transformar em código final.",
+      severity: "warning",
+    });
+  }
+
+  if (danglingEdges > 0) {
+    suggestions.push({
+      title: "Conexões soltas não entram no artefato",
+      detail:
+        "Setas ainda não conectadas a um símbolo são ignoradas pela geração. Feche essas conexões antes da release do fluxo.",
+      severity: "warning",
+    });
+  }
+
+  if (disconnectedNodes.length > 0) {
+    suggestions.push({
+      title: "Há símbolos fora do caminho principal",
+      detail:
+        "Símbolos isolados aparecem como passos soltos. Conecte-os, coloque-os em agrupador de apoio ou remova se forem apenas anotação.",
+      severity: "warning",
+    });
+  }
+
+  if (suggestions.length === 0) {
+    suggestions.push({
+      title: "Fluxo pronto para refinamento",
+      detail:
+        "A estrutura atual já possui passos conectados e pode ser refinada por linguagem, blueprint e testes de regra de negócio.",
+      severity: "success",
+    });
+  }
+
+  return suggestions;
+}
+
+// Spatial containment: a flow node belongs to the smallest group whose box covers its center.
+function assignGroups(doc: FlowDoc): Map<string, { id: string; name: string }> {
+  const groups = doc.nodes.filter((node) => node.kind === "group");
+  const membership = new Map<string, { id: string; name: string }>();
+  if (groups.length === 0) return membership;
+
+  for (const node of doc.nodes) {
+    if (node.kind === "group") continue;
+    let best: FlowNode | null = null;
+    let bestArea = Infinity;
+    for (const group of groups) {
+      const left = group.x - group.w / 2;
+      const right = group.x + group.w / 2;
+      const top = group.y - group.h / 2;
+      const bottom = group.y + group.h / 2;
+      if (node.x >= left && node.x <= right && node.y >= top && node.y <= bottom) {
+        const area = group.w * group.h;
+        if (area < bestArea) {
+          bestArea = area;
+          best = group;
+        }
+      }
+    }
+    if (best) {
+      membership.set(node.id, {
+        id: best.id,
+        name: best.name?.trim() || best.label.trim() || SYMBOLS.group.defaultLabel,
+      });
+    }
+  }
+  return membership;
+}
+
+function findStartNodeId(nodes: FlowNode[]) {
+  const start = nodes.find(
+    (node) =>
+      node.kind === "terminator" &&
+      node.label.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase().includes("inicio"),
+  );
+  return (start ?? nodes[0])?.id;
+}
+
+function createCodeModel(doc: FlowDoc, metadata?: Partial<GenerationMetadata>): CodeModel {
+  const normalizedMetadata = normalizeMetadata(metadata, doc);
+  const flowDoc = {
+    nodes: doc.nodes.filter((node) => node.kind !== "group"),
+    edges: doc.edges.flatMap((edge) => (edge.to ? [{ ...edge, to: edge.to }] : [])),
+  };
+  const membership = assignGroups(doc);
+  const orderedNodes = orderNodes(flowDoc);
+  const steps: CodeStep[] = orderedNodes.map((node, index) => {
     const label = node.label.trim() || SYMBOLS[node.kind].defaultLabel;
+    const technicalName = node.name?.trim() || label;
     return {
+      nodeId: node.id,
       index: index + 1,
       label,
       kindName: SYMBOLS[node.kind].name,
-      methodName: makeIdentifier(`${index + 1}_${label}`),
-      constantName: makeConstant(`${index + 1}_${label}`),
+      methodName: makeIdentifier(`${index + 1}_${technicalName}`),
+      constantName: makeConstant(`${index + 1}_${technicalName}`),
+      isDecision: node.kind === "decision",
+      groupName: membership.get(node.id)?.name,
     };
   });
+  const stepsByNodeId = new Map(steps.map((step) => [step.nodeId, step]));
+
+  const controlFlow = buildControlFlow(
+    flowDoc.nodes.map((node) => ({ id: node.id, kind: node.kind })),
+    flowDoc.edges,
+    findStartNodeId(flowDoc.nodes),
+  );
+
+  // Preserve group ordering and keep only groups that actually contain steps.
+  const groupOrder: CodeGroup[] = [];
+  const groupIndex = new Map<string, CodeGroup>();
+  for (const step of steps) {
+    const info = membership.get(step.nodeId);
+    if (!info) continue;
+    let group = groupIndex.get(info.id);
+    if (!group) {
+      group = { id: info.id, name: info.name, stepIds: [] };
+      groupIndex.set(info.id, group);
+      groupOrder.push(group);
+    }
+    group.stepIds.push(step.nodeId);
+  }
 
   return {
-    title: makeTitle(doc),
+    title: normalizedMetadata.title,
+    briefDescription: normalizedMetadata.briefDescription,
+    comments: normalizedMetadata.comments?.trim() ?? "",
+    namespace: makeNamespace(normalizedMetadata.title),
+    packageName: makePackageName(normalizedMetadata.title),
+    cppNamespace: makeCppNamespace(normalizedMetadata.title),
+    schemaName: makeSqlIdentifier(normalizedMetadata.title),
+    className: makeClassName(normalizedMetadata.title),
+    moduleName: makeIdentifier(normalizedMetadata.title) || "fluxolab_flow",
+    flowKey: makeIdentifier(normalizedMetadata.title) || "fluxolab_flow",
     steps,
-    decisions: steps.filter((step) => step.kindName === SYMBOLS.decision.name),
+    decisions: steps.filter((step) => step.isDecision),
+    transitions: flowDoc.edges.flatMap((edge) => {
+      const from = stepsByNodeId.get(edge.from);
+      const to = edge.to ? stepsByNodeId.get(edge.to) : undefined;
+      return from && to ? [{ from, to, label: edge.label }] : [];
+    }),
+    controlFlow,
+    stepsByNodeId,
+    groups: groupOrder,
+    isDecision: (nodeId: string) => stepsByNodeId.get(nodeId)?.isDecision ?? false,
   };
 }
 
@@ -97,6 +429,7 @@ function orderNodes(doc: FlowDoc) {
   const byId = new Map(doc.nodes.map((node) => [node.id, node]));
   const outgoing = new Map<string, string[]>();
   for (const edge of doc.edges) {
+    if (!edge.to) continue;
     const list = outgoing.get(edge.from) ?? [];
     list.push(edge.to);
     outgoing.set(edge.from, list);
@@ -138,6 +471,22 @@ function makeTitle(doc: FlowDoc) {
   return start ? `FluxoLab - ${start}` : "FluxoLab Flow";
 }
 
+function normalizeMetadata(
+  metadata?: Partial<GenerationMetadata>,
+  doc?: FlowDoc,
+): GenerationMetadata {
+  const title = metadata?.title?.trim() || (doc ? makeTitle(doc) : "FluxoLab Flow");
+  return {
+    title,
+    briefDescription:
+      metadata?.briefDescription?.trim() ||
+      (doc
+        ? `Fluxo com ${doc.nodes.length} simbolo(s) e ${doc.edges.length} conexao(oes).`
+        : "Artefato gerado a partir do fluxograma."),
+    comments: metadata?.comments?.trim() || "",
+  };
+}
+
 function makeIdentifier(value: string) {
   const normalized = value
     .normalize("NFD")
@@ -157,6 +506,30 @@ function makePascal(value: string) {
     .join("");
 }
 
+function makeClassName(value: string) {
+  const base = makePascal(value) || "FluxoLab";
+  return /flow$/i.test(base) || /fluxo$/i.test(base) ? base : `${base}Flow`;
+}
+
+function makeNamespace(value: string) {
+  const base = makePascal(value) || "Flow";
+  return `FluxoLab.${base}`;
+}
+
+function makePackageName(value: string) {
+  const base = makeIdentifier(value) || "flow";
+  return `fluxolab.${base}`;
+}
+
+function makeCppNamespace(value: string) {
+  const base = makeIdentifier(value) || "flow";
+  return `fluxolab::${base}`;
+}
+
+function makeSqlIdentifier(value: string) {
+  return makeIdentifier(value) || "fluxolab_flow";
+}
+
 function makeConstant(value: string) {
   return makeIdentifier(value).toUpperCase();
 }
@@ -165,23 +538,201 @@ function escapeComment(value: string) {
   return value.replace(/\*\//g, "* /");
 }
 
+function escapeLineComment(value: string) {
+  return value.replace(/\r?\n/g, " ");
+}
+
+function escapeUml(value: string) {
+  return value.replace(/"/g, '\\"');
+}
+
+function sqlString(value: string) {
+  return `'${value.replace(/'/g, "''")}'`;
+}
+
+function sqlIdentifier(value: string) {
+  return `"${value.replace(/"/g, '""')}"`;
+}
+
+function cStyleHeader(model: CodeModel) {
+  return `/*
+ * Titulo: ${escapeComment(escapeLineComment(model.title))}
+ * Descricao breve: ${escapeComment(escapeLineComment(model.briefDescription))}
+${model.comments ? ` * Comentarios: ${escapeComment(escapeLineComment(model.comments))}\n` : ""} */
+
+`;
+}
+
+function lineHeader(model: CodeModel, prefix: string) {
+  return `${prefix} Titulo: ${escapeLineComment(model.title)}
+${prefix} Descricao breve: ${escapeLineComment(model.briefDescription)}
+${model.comments ? `${prefix} Comentarios: ${escapeLineComment(model.comments)}\n` : ""}
+`;
+}
+
 function quote(value: string) {
   return JSON.stringify(value);
 }
 
+const FALSE_BRANCH_RE = /^(n|nao|não|no|false|falso|f)$/i;
+
+function groupTag(step: CodeStep) {
+  return step.groupName ? ` [Grupo: ${step.groupName}]` : "";
+}
+
+function javaMethodName(step: CodeStep) {
+  return makeIdentifier(step.methodName).replace(/_([a-z])/g, (_, c) => c.toUpperCase());
+}
+
+/**
+ * Language-agnostic emitter for the structured control flow. Each generator supplies
+ * the few tokens that differ (call syntax, brace vs. indentation, region markers) and
+ * this walker renders nested if/while blocks plus group "regions".
+ */
+interface FlowEmitter {
+  comment: string;
+  indentUnit: string;
+  baseIndent: string;
+  braces: boolean;
+  emptyStmt: string;
+  callStmt: (step: CodeStep) => string;
+  condExpr: (step: CodeStep) => string;
+  regionOpen: (name: string) => string;
+  regionClose: (name: string) => string;
+}
+
+function renderControlFlow(model: CodeModel, em: FlowEmitter): string {
+  const lines: string[] = [];
+  const ind = (level: number) => em.baseIndent + em.indentUnit.repeat(level);
+  const stepOf = (id: string) => model.stepsByNodeId.get(id);
+  const negate = (cond: string) => (em.braces ? `!(${cond})` : `not (${cond})`);
+
+  const block = (tree: CFNode[], level: number, opener: string, trailingComment?: string) => {
+    lines.push(ind(level) + opener + (trailingComment ? `  ${em.comment} ${trailingComment}` : ""));
+    const before = lines.length;
+    walk(tree, level + 1);
+    if (lines.length === before && !em.braces) lines.push(ind(level + 1) + em.emptyStmt);
+    if (em.braces) lines.push(ind(level) + "}");
+  };
+
+  function walk(tree: CFNode[], level: number) {
+    let openGroup: string | undefined;
+    const closeRegion = () => {
+      if (openGroup) {
+        lines.push(ind(level) + em.regionClose(openGroup));
+        openGroup = undefined;
+      }
+    };
+
+    for (const node of tree) {
+      if (node.type === "step") {
+        const step = stepOf(node.id);
+        if (!step) continue;
+        if (step.groupName !== openGroup) {
+          closeRegion();
+          if (step.groupName) {
+            lines.push(ind(level) + em.regionOpen(step.groupName));
+            openGroup = step.groupName;
+          }
+        }
+        lines.push(ind(level) + em.callStmt(step));
+        continue;
+      }
+
+      closeRegion();
+
+      if (node.type === "if") {
+        const step = stepOf(node.id);
+        const cond = step ? em.condExpr(step) : em.braces ? "true" : "True";
+        block(node.then, level, em.braces ? `if (${cond}) {` : `if ${cond}:`, node.thenLabel);
+        if (node.else.length) {
+          // Reuse the closing of the then-block as the else opener for brace languages.
+          if (em.braces) lines[lines.length - 1] = ind(level) + "} else {";
+          else lines.push(ind(level) + "else:");
+          if (node.elseLabel) {
+            lines[lines.length - 1] += `  ${em.comment} ${node.elseLabel}`;
+          }
+          const before = lines.length;
+          walk(node.else, level + 1);
+          if (lines.length === before && !em.braces) lines.push(ind(level + 1) + em.emptyStmt);
+          if (em.braces) lines.push(ind(level) + "}");
+        }
+      } else if (node.type === "while") {
+        const step = stepOf(node.id);
+        let cond = step?.isDecision ? em.condExpr(step) : em.braces ? "true" : "True";
+        if (step?.isDecision && node.condLabel && FALSE_BRANCH_RE.test(node.condLabel.trim())) {
+          cond = negate(cond);
+        }
+        block(
+          node.body,
+          level,
+          em.braces ? `while (${cond}) {` : `while ${cond}:`,
+          node.condLabel ? `repete enquanto a saída "${node.condLabel}" for tomada` : undefined,
+        );
+      } else if (node.type === "goto") {
+        const step = stepOf(node.id);
+        lines.push(
+          ind(level) +
+            `${em.comment} retornar para "${step?.label ?? node.id}" (${node.note ?? "ciclo"})`,
+        );
+      }
+    }
+    closeRegion();
+  }
+
+  walk(model.controlFlow, 0);
+
+  // Steps disconnected from the main flow still get invoked so nothing is silently dropped.
+  const covered = collectCFIds(model.controlFlow);
+  const orphans = model.steps.filter((step) => !covered.has(step.nodeId));
+  if (orphans.length) {
+    lines.push(ind(0) + `${em.comment} Passos não conectados ao fluxo principal:`);
+    for (const step of orphans) lines.push(ind(0) + em.callStmt(step));
+  }
+
+  if (lines.length === 0) {
+    lines.push(ind(0) + (em.braces ? "return;" : em.emptyStmt));
+  }
+  return lines.join("\n");
+}
+
 function pythonStepFunctions(model: CodeModel) {
   return model.steps
-    .map(
-      (step) => `def ${step.methodName}(context: FlowContext) -> None:
-    """${step.kindName}: ${step.label}"""
+    .map((step) => {
+      const audit = `    context.audit.append(${quote(`${step.kindName}: ${step.label}`)})`;
+      if (step.isDecision) {
+        return `def ${step.methodName}(context: FlowContext) -> bool:
+    """${step.kindName}: ${step.label}${groupTag(step)}"""
+${audit}
+    # TODO: avaliar a condição "${step.label}" e retornar True/False.
+    return False
+`;
+      }
+      return `def ${step.methodName}(context: FlowContext) -> None:
+    """${step.kindName}: ${step.label}${groupTag(step)}"""
     # TODO: implementar regra do símbolo "${step.label}".
-    context.audit.append(${quote(`${step.kindName}: ${step.label}`)})
-`,
-    )
+${audit}
+`;
+    })
     .join("\n");
 }
 
+function pythonFlowEmitter(): FlowEmitter {
+  return {
+    comment: "#",
+    indentUnit: "    ",
+    baseIndent: "    ",
+    braces: false,
+    emptyStmt: "pass",
+    callStmt: (step) => `${step.methodName}(context)`,
+    condExpr: (step) => `${step.methodName}(context)`,
+    regionOpen: (name) => `# region ${name}`,
+    regionClose: () => "# endregion",
+  };
+}
+
 function generatePython(model: CodeModel, blueprint: CodeBlueprintId) {
+  const header = lineHeader(model, "#");
   const stepNames = model.steps.map((step) => step.methodName).join(",\n    ");
   const stepMethods = model.steps
     .map((step) => `        self.${step.methodName}(context)  # ${step.kindName}: ${step.label}`)
@@ -204,11 +755,13 @@ function generatePython(model: CodeModel, blueprint: CodeBlueprintId) {
     .join("\n");
 
   if (blueprint === "template-method") {
-    return `from __future__ import annotations
+    return `${header}from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Any
+
+FLOW_NAMESPACE = ${quote(model.packageName)}
 
 
 @dataclass
@@ -223,12 +776,12 @@ ${stepMethods || "        pass"}
 
 ${abstractMethods}
 
-class GeneratedFlow(FlowTemplate):
+class ${model.className}(FlowTemplate):
 ${concreteMethods || "    pass\n"}
 
 
 if __name__ == "__main__":
-    GeneratedFlow().run(FlowContext())
+    ${model.className}().run(FlowContext())
 `;
   }
 
@@ -248,8 +801,10 @@ if __name__ == "__main__":
         return True
 `;
 
-    return `from dataclasses import dataclass, field
+    return `${header}from dataclasses import dataclass, field
 from typing import Any, Protocol
+
+FLOW_NAMESPACE = ${quote(model.packageName)}
 
 
 @dataclass
@@ -279,8 +834,10 @@ FLOW_STEPS = [
   }
 
   if (blueprint === "command-pipeline") {
-    return `from dataclasses import dataclass, field
+    return `${header}from dataclasses import dataclass, field
 from typing import Any, Protocol
+
+FLOW_NAMESPACE = ${quote(model.packageName)}
 
 
 @dataclass
@@ -312,8 +869,11 @@ def run_flow(context: FlowContext) -> None:
 `;
   }
 
-  return `from dataclasses import dataclass, field
-from typing import Any, Callable
+  const body = renderControlFlow(model, pythonFlowEmitter());
+  return `${header}from dataclasses import dataclass, field
+from typing import Any
+
+FLOW_NAMESPACE = ${quote(model.packageName)}
 
 
 @dataclass
@@ -323,18 +883,14 @@ class FlowContext:
 
 
 ${pythonStepFunctions(model)}
-FLOW_STEPS: list[Callable[[FlowContext], None]] = [
-    ${stepNames}
-]
-
-
 def run_flow(context: FlowContext) -> None:
-    for step in FLOW_STEPS:
-        step(context)
+    """Executa o fluxo seguindo a estrutura de decisões e repetições do fluxograma."""
+${body}
 `;
 }
 
 function generateCSharp(model: CodeModel, blueprint: CodeBlueprintId) {
+  const header = cStyleHeader(model);
   const methods = model.steps
     .map(
       (step) => `    private static void ${makePascal(step.methodName)}(FlowContext context)
@@ -367,7 +923,9 @@ function generateCSharp(model: CodeModel, blueprint: CodeBlueprintId) {
     .join("\n");
 
   if (blueprint === "template-method") {
-    return `using System.Collections.Generic;
+    return `${header}using System.Collections.Generic;
+
+namespace ${model.namespace};
 
 public sealed class FlowContext
 {
@@ -385,7 +943,7 @@ ${abstractCalls || "        return;"}
 ${abstractMethods}
 }
 
-public sealed class GeneratedFlow : FlowTemplate
+public sealed class ${model.className} : FlowTemplate
 {
 ${overrideMethods || ""}
 }
@@ -393,7 +951,9 @@ ${overrideMethods || ""}
   }
 
   if (blueprint === "strategy") {
-    return `using System.Collections.Generic;
+    return `${header}using System.Collections.Generic;
+
+namespace ${model.namespace};
 
 public sealed class FlowContext
 {
@@ -411,11 +971,11 @@ public sealed class DefaultDecisionStrategy : IDecisionStrategy
     public bool Decide(FlowContext context) => true;
 }
 
-public sealed class GeneratedFlow
+public sealed class ${model.className}
 {
     private readonly IDecisionStrategy _decisionStrategy;
 
-    public GeneratedFlow(IDecisionStrategy decisionStrategy)
+    public ${model.className}(IDecisionStrategy decisionStrategy)
     {
         _decisionStrategy = decisionStrategy;
     }
@@ -444,7 +1004,9 @@ ${methods}
 `,
       )
       .join("\n");
-    return `using System.Collections.Generic;
+    return `${header}using System.Collections.Generic;
+
+namespace ${model.namespace};
 
 public sealed class FlowContext
 {
@@ -458,7 +1020,7 @@ public interface IFlowCommand
 }
 
 ${commandClasses}
-public sealed class GeneratedFlow
+public sealed class ${model.className}
 {
     private readonly IReadOnlyList<IFlowCommand> _pipeline = new IFlowCommand[]
     {
@@ -474,8 +1036,42 @@ ${model.steps.map((step) => `        new ${makePascal(step.methodName)}Command()
 `;
   }
 
-  return `using System;
-using System.Collections.Generic;
+  const proceduralMethods = model.steps
+    .map((step) => {
+      const audit = `        context.Audit.Add(${quote(escapeComment(`${step.kindName}: ${step.label}`))});`;
+      if (step.isDecision) {
+        return `    // ${escapeComment(`${step.kindName}: ${step.label}`)}${groupTag(step)}
+    private static bool ${makePascal(step.methodName)}(FlowContext context)
+    {
+${audit}
+        // TODO: avaliar a condição "${escapeComment(step.label)}".
+        return false;
+    }
+`;
+      }
+      return `    // ${escapeComment(`${step.kindName}: ${step.label}`)}${groupTag(step)}
+    private static void ${makePascal(step.methodName)}(FlowContext context)
+    {
+${audit}
+        // TODO: implementar regra do símbolo "${escapeComment(step.label)}".
+    }
+`;
+    })
+    .join("\n");
+  const csharpEmitter: FlowEmitter = {
+    comment: "//",
+    indentUnit: "    ",
+    baseIndent: "        ",
+    braces: true,
+    emptyStmt: "return;",
+    callStmt: (step) => `${makePascal(step.methodName)}(context);`,
+    condExpr: (step) => `${makePascal(step.methodName)}(context)`,
+    regionOpen: (name) => `#region ${name}`,
+    regionClose: () => "#endregion",
+  };
+  return `${header}using System.Collections.Generic;
+
+namespace ${model.namespace};
 
 public sealed class FlowContext
 {
@@ -483,19 +1079,20 @@ public sealed class FlowContext
     public List<string> Audit { get; } = new();
 }
 
-public static class GeneratedFlow
+public static class ${model.className}
 {
     public static void Run(FlowContext context)
     {
-${calls || "        return;"}
+${renderControlFlow(model, csharpEmitter)}
     }
 
-${methods}
+${proceduralMethods}
 }
 `;
 }
 
 function generateJava(model: CodeModel, blueprint: CodeBlueprintId) {
+  const header = cStyleHeader(model);
   const methodCalls = model.steps
     .map(
       (step) =>
@@ -526,7 +1123,9 @@ function generateJava(model: CodeModel, blueprint: CodeBlueprintId) {
           `    protected abstract void ${makeIdentifier(step.methodName).replace(/_([a-z])/g, (_, c) => c.toUpperCase())}(FlowContext context);`,
       )
       .join("\n");
-    return `import java.util.*;
+    return `${header}package ${model.packageName};
+
+import java.util.*;
 
 class FlowContext {
     final Map<String, Object> data = new HashMap<>();
@@ -541,14 +1140,16 @@ ${abstractCalls || "        return;"}
 ${abstractMethods}
 }
 
-public final class FluxoLabFlow extends FlowTemplate {
+public final class ${model.className} extends FlowTemplate {
 ${methods.replaceAll("private static", "protected")}
 }
 `;
   }
 
   if (blueprint === "strategy") {
-    return `import java.util.*;
+    return `${header}package ${model.packageName};
+
+import java.util.*;
 
 class FlowContext {
     final Map<String, Object> data = new HashMap<>();
@@ -559,10 +1160,10 @@ interface DecisionStrategy {
     boolean decide(FlowContext context);
 }
 
-public final class FluxoLabFlow {
+public final class ${model.className} {
     private final DecisionStrategy decisionStrategy;
 
-    public FluxoLabFlow(DecisionStrategy decisionStrategy) {
+    public ${model.className}(DecisionStrategy decisionStrategy) {
         this.decisionStrategy = decisionStrategy;
     }
 
@@ -577,7 +1178,9 @@ ${methods}
   }
 
   if (blueprint === "command-pipeline") {
-    return `import java.util.*;
+    return `${header}package ${model.packageName};
+
+import java.util.*;
 
 class FlowContext {
     final Map<String, Object> data = new HashMap<>();
@@ -588,7 +1191,7 @@ interface FlowCommand {
     void execute(FlowContext context);
 }
 
-public final class FluxoLabFlow {
+public final class ${model.className} {
     private final List<FlowCommand> pipeline = List.of(
 ${model.steps.map((step) => `        context -> context.audit.add(${quote(escapeComment(`${step.kindName}: ${step.label}`))})`).join(",\n")}
     );
@@ -602,24 +1205,59 @@ ${model.steps.map((step) => `        context -> context.audit.add(${quote(escape
 `;
   }
 
-  return `import java.util.*;
+  const proceduralMethods = model.steps
+    .map((step) => {
+      const name = javaMethodName(step);
+      const audit = `        context.audit.add(${quote(escapeComment(`${step.kindName}: ${step.label}`))});`;
+      if (step.isDecision) {
+        return `    // ${escapeComment(`${step.kindName}: ${step.label}`)}${groupTag(step)}
+    private static boolean ${name}(FlowContext context) {
+${audit}
+        // TODO: avaliar a condição "${escapeComment(step.label)}".
+        return false;
+    }
+`;
+      }
+      return `    // ${escapeComment(`${step.kindName}: ${step.label}`)}${groupTag(step)}
+    private static void ${name}(FlowContext context) {
+${audit}
+        // TODO: implementar regra do símbolo "${escapeComment(step.label)}".
+    }
+`;
+    })
+    .join("\n");
+  const javaEmitter: FlowEmitter = {
+    comment: "//",
+    indentUnit: "    ",
+    baseIndent: "        ",
+    braces: true,
+    emptyStmt: "return;",
+    callStmt: (step) => `${javaMethodName(step)}(context);`,
+    condExpr: (step) => `${javaMethodName(step)}(context)`,
+    regionOpen: (name) => `// region ${name}`,
+    regionClose: () => "// endregion",
+  };
+  return `${header}package ${model.packageName};
+
+import java.util.*;
 
 class FlowContext {
     final Map<String, Object> data = new HashMap<>();
     final List<String> audit = new ArrayList<>();
 }
 
-public final class FluxoLabFlow {
+public final class ${model.className} {
     public static void run(FlowContext context) {
-${methodCalls || "        return;"}
+${renderControlFlow(model, javaEmitter)}
     }
 
-${methods}
+${proceduralMethods}
 }
 `;
 }
 
 function generateJavaScript(model: CodeModel, blueprint: CodeBlueprintId) {
+  const header = lineHeader(model, "//");
   const functions = model.steps
     .map(
       (step) => `function ${step.methodName}(context) {
@@ -632,7 +1270,9 @@ function generateJavaScript(model: CodeModel, blueprint: CodeBlueprintId) {
   const stepArray = model.steps.map((step) => `  ${step.methodName},`).join("\n");
 
   if (blueprint === "template-method") {
-    return `export class FlowContext {
+    return `${header}export const FLOW_NAMESPACE = ${quote(model.packageName)};
+
+export class FlowContext {
   constructor() {
     this.data = new Map();
     this.audit = [];
@@ -653,7 +1293,7 @@ ${model.steps
   .join("\n")}
 }
 
-export class GeneratedFlow extends FlowTemplate {
+export class ${model.className} extends FlowTemplate {
 ${model.steps
   .map(
     (step) => `  ${step.methodName}(context) {
@@ -667,14 +1307,16 @@ ${model.steps
   }
 
   if (blueprint === "strategy") {
-    return `export class FlowContext {
+    return `${header}export const FLOW_NAMESPACE = ${quote(model.packageName)};
+
+export class FlowContext {
   constructor() {
     this.data = new Map();
     this.audit = [];
   }
 }
 
-export class GeneratedFlow {
+export class ${model.className} {
   constructor(decisionStrategy) {
     this.decisionStrategy = decisionStrategy;
   }
@@ -693,7 +1335,9 @@ ${stepArray}
   }
 
   if (blueprint === "command-pipeline") {
-    return `export class FlowContext {
+    return `${header}export const FLOW_NAMESPACE = ${quote(model.packageName)};
+
+export class FlowContext {
   constructor() {
     this.data = new Map();
     this.audit = [];
@@ -720,25 +1364,55 @@ export function runFlow(context) {
 `;
   }
 
-  return `export class FlowContext {
+  const proceduralFunctions = model.steps
+    .map((step) => {
+      const audit = `  context.audit.push(${quote(escapeComment(`${step.kindName}: ${step.label}`))});`;
+      if (step.isDecision) {
+        return `// ${escapeComment(`${step.kindName}: ${step.label}`)}${groupTag(step)}
+function ${step.methodName}(context) {
+${audit}
+  // TODO: avaliar a condição "${escapeComment(step.label)}".
+  return false;
+}
+`;
+      }
+      return `// ${escapeComment(`${step.kindName}: ${step.label}`)}${groupTag(step)}
+function ${step.methodName}(context) {
+${audit}
+  // TODO: implementar regra do símbolo "${escapeComment(step.label)}".
+}
+`;
+    })
+    .join("\n");
+  const jsEmitter: FlowEmitter = {
+    comment: "//",
+    indentUnit: "  ",
+    baseIndent: "  ",
+    braces: true,
+    emptyStmt: "return;",
+    callStmt: (step) => `${step.methodName}(context);`,
+    condExpr: (step) => `${step.methodName}(context)`,
+    regionOpen: (name) => `// #region ${name}`,
+    regionClose: () => "// #endregion",
+  };
+  return `${header}export const FLOW_NAMESPACE = ${quote(model.packageName)};
+
+export class FlowContext {
   constructor() {
     this.data = new Map();
     this.audit = [];
   }
 }
 
-${functions}
-export const FLOW_STEPS = [
-${stepArray}
-];
-
+${proceduralFunctions}
 export function runFlow(context) {
-  for (const step of FLOW_STEPS) step(context);
+${renderControlFlow(model, jsEmitter)}
 }
 `;
 }
 
 function generateCpp(model: CodeModel, blueprint: CodeBlueprintId) {
+  const header = cStyleHeader(model);
   const methods = model.steps
     .map(
       (step) => `void ${step.methodName}(FlowContext& context) {
@@ -751,9 +1425,11 @@ function generateCpp(model: CodeModel, blueprint: CodeBlueprintId) {
   const calls = model.steps.map((step) => `    ${step.methodName}(context);`).join("\n");
 
   if (blueprint === "template-method") {
-    return `#include <string>
+    return `${header}#include <string>
 #include <unordered_map>
 #include <vector>
+
+namespace ${model.cppNamespace} {
 
 struct FlowContext {
     std::unordered_map<std::string, std::string> data;
@@ -770,7 +1446,7 @@ protected:
 ${model.steps.map((step) => `    virtual void ${step.methodName}(FlowContext& context) = 0;`).join("\n")}
 };
 
-class GeneratedFlow final : public FlowTemplate {
+class ${model.className} final : public FlowTemplate {
 protected:
 ${model.steps
   .map(
@@ -781,15 +1457,19 @@ ${model.steps
   )
   .join("\n")}
 };
+
+}  // namespace ${model.cppNamespace}
 `;
   }
 
   if (blueprint === "strategy") {
-    return `#include <memory>
+    return `${header}#include <memory>
 #include <string>
 #include <unordered_map>
 #include <utility>
 #include <vector>
+
+namespace ${model.cppNamespace} {
 
 struct FlowContext {
     std::unordered_map<std::string, std::string> data;
@@ -801,9 +1481,9 @@ struct DecisionStrategy {
     virtual bool decide(const FlowContext& context) const = 0;
 };
 
-class GeneratedFlow {
+class ${model.className} {
 public:
-    explicit GeneratedFlow(std::shared_ptr<DecisionStrategy> strategy)
+    explicit ${model.className}(std::shared_ptr<DecisionStrategy> strategy)
         : strategy_(std::move(strategy)) {}
 
     void run(FlowContext& context) {
@@ -816,14 +1496,17 @@ private:
 };
 
 ${methods}
+}  // namespace ${model.cppNamespace}
 `;
   }
 
   if (blueprint === "command-pipeline") {
-    return `#include <functional>
+    return `${header}#include <functional>
 #include <string>
 #include <unordered_map>
 #include <vector>
+
+namespace ${model.cppNamespace} {
 
 struct FlowContext {
     std::unordered_map<std::string, std::string> data;
@@ -839,21 +1522,202 @@ ${model.steps.map((step) => `    [](FlowContext& context) { context.audit.push_b
 void run_flow(FlowContext& context) {
     for (const auto& command : pipeline) command(context);
 }
+
+}  // namespace ${model.cppNamespace}
 `;
   }
 
-  return `#include <string>
+  const proceduralMethods = model.steps
+    .map((step) => {
+      const audit = `    context.audit.push_back(${quote(escapeComment(`${step.kindName}: ${step.label}`))});`;
+      if (step.isDecision) {
+        return `// ${escapeComment(`${step.kindName}: ${step.label}`)}${groupTag(step)}
+bool ${step.methodName}(FlowContext& context) {
+${audit}
+    // TODO: avaliar a condição "${escapeComment(step.label)}".
+    return false;
+}
+`;
+      }
+      return `// ${escapeComment(`${step.kindName}: ${step.label}`)}${groupTag(step)}
+void ${step.methodName}(FlowContext& context) {
+${audit}
+    // TODO: implementar regra do símbolo "${escapeComment(step.label)}".
+}
+`;
+    })
+    .join("\n");
+  const cppEmitter: FlowEmitter = {
+    comment: "//",
+    indentUnit: "    ",
+    baseIndent: "    ",
+    braces: true,
+    emptyStmt: "return;",
+    callStmt: (step) => `${step.methodName}(context);`,
+    condExpr: (step) => `${step.methodName}(context)`,
+    regionOpen: (name) => `// region ${name}`,
+    regionClose: () => "// endregion",
+  };
+  return `${header}#include <string>
 #include <unordered_map>
 #include <vector>
+
+namespace ${model.cppNamespace} {
 
 struct FlowContext {
     std::unordered_map<std::string, std::string> data;
     std::vector<std::string> audit;
 };
 
-${methods}
+${proceduralMethods}
 void run_flow(FlowContext& context) {
-${calls || "    return;"}
+${renderControlFlow(model, cppEmitter)}
+}
+
+}  // namespace ${model.cppNamespace}
+`;
+}
+
+function umlStateId(step: CodeStep) {
+  return `S${step.index}`;
+}
+
+function isEndStep(step: CodeStep) {
+  const normalized = step.label
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase();
+  return step.kindName === SYMBOLS.terminator.name && /(fim|final|end)\b/.test(normalized);
+}
+
+function generateUml(model: CodeModel) {
+  const header = lineHeader(model, "'");
+  const states = model.steps
+    .map(
+      (step) =>
+        `state "${escapeUml(`${step.index}. ${step.kindName}\\n${step.label}`)}" as ${umlStateId(step)}`,
+    )
+    .join("\n");
+  const transitions = model.transitions
+    .map(
+      (transition) =>
+        `${umlStateId(transition.from)} --> ${umlStateId(transition.to)}${
+          transition.label ? ` : ${escapeUml(transition.label)}` : ""
+        }`,
+    )
+    .join("\n");
+  const firstStep = model.steps[0];
+  const outgoingIds = new Set(model.transitions.map((transition) => transition.from.nodeId));
+  const endTransitions = model.steps
+    .filter((step) => isEndStep(step) && !outgoingIds.has(step.nodeId))
+    .map((step) => `${umlStateId(step)} --> [*]`)
+    .join("\n");
+  const note = firstStep
+    ? `note top of ${umlStateId(firstStep)}
+${escapeUml(model.briefDescription)}
+${model.comments ? `\nComentarios: ${escapeUml(model.comments)}` : ""}
+end note`
+    : "";
+
+  return `${header}@startuml
+title "${escapeUml(model.title)}"
+hide empty description
+skinparam linetype ortho
+skinparam shadowing false
+
+${states || "' Nenhum estado encontrado."}
+${firstStep ? `[*] --> ${umlStateId(firstStep)}` : ""}
+${transitions || "' Nenhuma transicao encontrada."}
+${endTransitions}
+${note}
+@enduml
+`;
+}
+
+function generateDatabaseScript(model: CodeModel) {
+  const header = lineHeader(model, "--");
+  const schema = sqlIdentifier(model.schemaName);
+  const flowDefinition = `${schema}.flow_definition`;
+  const flowStep = `${schema}.flow_step`;
+  const flowTransition = `${schema}.flow_transition`;
+  const flowKey = sqlString(model.flowKey);
+  const stepRows = model.steps
+    .map(
+      (step) =>
+        `  (${flowKey}, ${sqlString(step.nodeId)}, ${step.index}, ${sqlString(
+          step.kindName,
+        )}, ${sqlString(step.label)}, ${sqlString(step.methodName)})`,
+    )
+    .join(",\n");
+  const transitionRows = model.transitions
+    .map(
+      (transition, index) =>
+        `  (${flowKey}, ${index + 1}, ${sqlString(transition.from.nodeId)}, ${sqlString(
+          transition.to.nodeId,
+        )}, ${transition.label ? sqlString(transition.label) : "NULL"})`,
+    )
+    .join(",\n");
+
+  return `${header}CREATE SCHEMA IF NOT EXISTS ${schema};
+
+CREATE TABLE IF NOT EXISTS ${flowDefinition} (
+  flow_key VARCHAR(160) PRIMARY KEY,
+  title TEXT NOT NULL,
+  brief_description TEXT NOT NULL,
+  comments TEXT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS ${flowStep} (
+  id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  flow_key VARCHAR(160) NOT NULL REFERENCES ${flowDefinition}(flow_key) ON DELETE CASCADE,
+  step_key VARCHAR(120) NOT NULL,
+  step_order INTEGER NOT NULL,
+  symbol_kind VARCHAR(80) NOT NULL,
+  label TEXT NOT NULL,
+  method_name VARCHAR(160) NOT NULL,
+  UNIQUE (flow_key, step_key)
+);
+
+CREATE TABLE IF NOT EXISTS ${flowTransition} (
+  id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  flow_key VARCHAR(160) NOT NULL REFERENCES ${flowDefinition}(flow_key) ON DELETE CASCADE,
+  transition_order INTEGER NOT NULL,
+  from_step_key VARCHAR(120) NOT NULL,
+  to_step_key VARCHAR(120) NOT NULL,
+  label TEXT NULL,
+  CONSTRAINT fk_flow_transition_from
+    FOREIGN KEY (flow_key, from_step_key) REFERENCES ${flowStep}(flow_key, step_key),
+  CONSTRAINT fk_flow_transition_to
+    FOREIGN KEY (flow_key, to_step_key) REFERENCES ${flowStep}(flow_key, step_key)
+);
+
+INSERT INTO ${flowDefinition} (flow_key, title, brief_description, comments)
+VALUES (${flowKey}, ${sqlString(model.title)}, ${sqlString(model.briefDescription)}, ${
+    model.comments ? sqlString(model.comments) : "NULL"
+  })
+ON CONFLICT (flow_key) DO UPDATE SET
+  title = EXCLUDED.title,
+  brief_description = EXCLUDED.brief_description,
+  comments = EXCLUDED.comments;
+
+DELETE FROM ${flowTransition} WHERE flow_key = ${flowKey};
+DELETE FROM ${flowStep} WHERE flow_key = ${flowKey};
+
+${
+  stepRows
+    ? `INSERT INTO ${flowStep} (flow_key, step_key, step_order, symbol_kind, label, method_name)
+VALUES
+${stepRows};`
+    : "-- Nenhum passo para inserir."
+}
+
+${
+  transitionRows
+    ? `INSERT INTO ${flowTransition} (flow_key, transition_order, from_step_key, to_step_key, label)
+VALUES
+${transitionRows};`
+    : "-- Nenhuma transicao para inserir."
 }
 `;
 }

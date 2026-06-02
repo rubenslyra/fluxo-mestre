@@ -156,8 +156,10 @@ export function diffFlows(a: FlowDoc, b: FlowDoc): FlowDiff {
   const edgeKey = (doc: FlowDoc, e: { from: string; to: string; label?: string }) =>
     `${labelOf(doc, e.from)}→${labelOf(doc, e.to)}|${norm(e.label ?? "")}`;
 
-  const aEdges = new Map(a.edges.map((e) => [edgeKey(a, e), e]));
-  const bEdges = new Map(b.edges.map((e) => [edgeKey(b, e), e]));
+  const aConnectedEdges = a.edges.flatMap((e) => (e.to ? [{ ...e, to: e.to }] : []));
+  const bConnectedEdges = b.edges.flatMap((e) => (e.to ? [{ ...e, to: e.to }] : []));
+  const aEdges = new Map(aConnectedEdges.map((e) => [edgeKey(a, e), e]));
+  const bEdges = new Map(bConnectedEdges.map((e) => [edgeKey(b, e), e]));
   const addedEdges: EdgeKey[] = [];
   const removedEdges: EdgeKey[] = [];
   bEdges.forEach((e, k) => {

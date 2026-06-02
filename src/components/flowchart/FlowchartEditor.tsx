@@ -7,8 +7,44 @@ import {
 } from "../settings/appSettings";
 import { SYMBOLS, type SymbolKind } from "./symbols";
 import { SymbolPreview, NodeShape } from "./NodeShape";
-import { edgePath } from "./geometry";
-import type { FlowDoc, FlowNode } from "./types";
+import { edgePath, edgePathToPoint, computeEdgeCurves } from "./geometry";
+import {
+  canConnectFlowNodes,
+  connectFlowNodes,
+  findTopNodeAtPoint,
+  moveNodesTo,
+  nodeIntersectsSelection,
+  normalizeSelectionBox,
+  type SelectionBox,
+} from "./flowModel";
+import type {
+  EdgeKind,
+  FlowDoc,
+  FlowNode,
+  FlowNodeTextStyle,
+  FlowPoint,
+  NodeFontFamily,
+  NodeTextAlign,
+  NodeTextListStyle,
+  PortSide,
+  ResizeHandle,
+} from "./types";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
+  FONT_FAMILY_OPTIONS,
+  TEXT_ALIGN_OPTIONS,
+  TEXT_LIST_OPTIONS,
+  estimateNodeTextSize,
+  nodeTextBox,
+  parseTextStyle,
+  resolveTextStyle,
+} from "./textStyle";
 import { AiGeneratorPanel } from "./AiGeneratorPanel";
 import { CodeGeneratorPanel } from "./CodeGeneratorPanel";
 import { validateFlow } from "./validation";
@@ -52,9 +88,29 @@ function uid() {
 
 function cloneDoc(doc: FlowDoc): FlowDoc {
   return {
-    nodes: doc.nodes.map((node) => ({ ...node })),
-    edges: doc.edges.map((edge) => ({ ...edge })),
+    nodes: doc.nodes.map((node) => ({
+      ...node,
+      textStyle: node.textStyle ? { ...node.textStyle } : undefined,
+    })),
+    edges: doc.edges.map((edge) => ({
+      ...edge,
+      toPoint: edge.toPoint ? { ...edge.toPoint } : undefined,
+    })),
   };
+}
+
+function parseFlowPoint(value: unknown): FlowPoint | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const point = value as Partial<FlowPoint>;
+  const x = Number(point.x);
+  const y = Number(point.y);
+  return Number.isFinite(x) && Number.isFinite(y) ? { x, y } : undefined;
+}
+
+function pathEndPoint(path: string): FlowPoint | null {
+  const numbers = path.match(/-?\d+(?:\.\d+)?/g)?.map(Number) ?? [];
+  if (numbers.length < 2) return null;
+  return { x: numbers[numbers.length - 2], y: numbers[numbers.length - 1] };
 }
 
 function normalizeDoc(value: unknown): FlowDoc {
@@ -85,7 +141,10 @@ function normalizeDoc(value: unknown): FlowDoc {
           Number.isFinite(partial.h) && Number(partial.h) > 0
             ? Number(partial.h)
             : def.defaultHeight,
+        name: typeof partial.name === "string" && partial.name.trim() ? partial.name : undefined,
         label: typeof partial.label === "string" ? partial.label : def.defaultLabel,
+        textStyle: parseTextStyle(partial.textStyle, { kind }),
+        color: typeof partial.color === "string" ? partial.color : undefined,
       },
     ];
   });
@@ -96,8 +155,10 @@ function normalizeDoc(value: unknown): FlowDoc {
     if (!edge || typeof edge !== "object") return [];
     const partial = edge as Partial<FlowDoc["edges"][number]>;
     const from = typeof partial.from === "string" ? partial.from : "";
-    const to = typeof partial.to === "string" ? partial.to : "";
-    if (!nodeIds.has(from) || !nodeIds.has(to) || from === to) return [];
+    const rawTo = typeof partial.to === "string" ? partial.to : "";
+    const to = nodeIds.has(rawTo) && rawTo !== from ? rawTo : undefined;
+    const toPoint = parseFlowPoint(partial.toPoint);
+    if (!nodeIds.has(from) || (!to && !toPoint)) return [];
     const id = String(partial.id || `e${index + 1}`);
     if (seenEdges.has(id)) return [];
     seenEdges.add(id);
@@ -106,7 +167,10 @@ function normalizeDoc(value: unknown): FlowDoc {
         id,
         from,
         to,
+        toPoint: to ? undefined : toPoint,
         label: typeof partial.label === "string" && partial.label ? partial.label : undefined,
+        kind: (typeof partial.kind === "string" && partial.kind) || undefined,
+        fromPort: (typeof partial.fromPort === "string" && partial.fromPort) || undefined,
       },
     ];
   });
@@ -116,25 +180,45 @@ function normalizeDoc(value: unknown): FlowDoc {
 
 const EXPORT_PREFS_KEY = "flowchart-export-prefs-v1";
 type ExportFormat = "png" | "svg" | "pdf";
-type SelectionBox = { startX: number; startY: number; x: number; y: number };
+type PendingEdge = { from: string; x: number; y: number; curve?: number };
+type EdgeEndpointDrag = {
+  edgeId: string;
+  startClientX: number;
+  startClientY: number;
+  committed: boolean;
+};
 
-function normalizeSelectionBox(box: SelectionBox) {
-  const x = Math.min(box.startX, box.x);
-  const y = Math.min(box.startY, box.y);
-  const w = Math.abs(box.x - box.startX);
-  const h = Math.abs(box.y - box.startY);
-  return { x, y, w, h };
+const GRID_SIZE = 8;
+
+function snapToGrid(value: number) {
+  return Math.round(value / GRID_SIZE) * GRID_SIZE;
 }
 
-function nodeIntersectsSelection(
-  node: FlowNode,
-  rect: { x: number; y: number; w: number; h: number },
-) {
-  const left = node.x - node.w / 2;
-  const right = node.x + node.w / 2;
-  const top = node.y - node.h / 2;
-  const bottom = node.y + node.h / 2;
-  return rect.x <= right && rect.x + rect.w >= left && rect.y <= bottom && rect.y + rect.h >= top;
+function getNodeResizeMinSize(node: FlowNode) {
+  if (node.kind === "connector") return { minWidth: 40, minHeight: 40 };
+  return { minWidth: 80, minHeight: 60 };
+}
+
+function fitNodeToText(node: FlowNode, textStyle: ReturnType<typeof resolveTextStyle>) {
+  const { minWidth, minHeight } = getNodeResizeMinSize(node);
+  const textSize = estimateNodeTextSize(node, textStyle);
+  let w = Math.max(node.w, minWidth);
+  let h = Math.max(node.h, minHeight);
+
+  for (let i = 0; i < 6; i += 1) {
+    const candidate = { ...node, w, h };
+    const box = nodeTextBox(candidate);
+    const extraW = Math.max(0, textSize.w - box.w);
+    const extraH = Math.max(0, textSize.h - box.h);
+    if (extraW < 1 && extraH < 1) break;
+    w += extraW * 1.35;
+    h += extraH * 1.35;
+  }
+
+  return {
+    w: Math.max(minWidth, snapToGrid(w)),
+    h: Math.max(minHeight, snapToGrid(h)),
+  };
 }
 
 function loadExportPrefs(): { format: ExportFormat; scale: number } {
@@ -163,9 +247,7 @@ export function FlowchartEditor() {
   const [selectedEdge, setSelectedEdge] = useState<string | null>(null);
   const [selectionBox, setSelectionBox] = useState<SelectionBox | null>(null);
   const [view, setView] = useState({ x: 0, y: 0, k: 1 });
-  const [pendingEdge, setPendingEdge] = useState<{ from: string; x: number; y: number } | null>(
-    null,
-  );
+  const [pendingEdge, setPendingEdge] = useState<PendingEdge | null>(null);
   const [aiOpen, setAiOpen] = useState(false);
   const [codeOpen, setCodeOpen] = useState(false);
   const [search, setSearch] = useState("");
@@ -217,6 +299,23 @@ export function FlowchartEditor() {
   } | null>(null);
   const panRef = useRef<{ x: number; y: number; vx: number; vy: number } | null>(null);
   const selectionBoxRef = useRef<SelectionBox | null>(null);
+  const pendingEdgeRef = useRef<PendingEdge | null>(null);
+  const edgeEndpointDragRef = useRef<EdgeEndpointDrag | null>(null);
+  const resizeRef = useRef<{
+    nodeId: string;
+    handle: ResizeHandle;
+    startWorldX: number;
+    startWorldY: number;
+    startClientX: number;
+    startClientY: number;
+    initialWidth: number;
+    initialHeight: number;
+    initialX: number;
+    initialY: number;
+    minWidth: number;
+    minHeight: number;
+    committed: boolean;
+  } | null>(null);
   const docRef = useRef(doc);
   const viewRef = useRef(view);
   docRef.current = doc;
@@ -263,7 +362,13 @@ export function FlowchartEditor() {
   const matchedIds = useMemo(() => {
     const q = search.trim().toLowerCase();
     if (!q) return null;
-    return new Set(doc.nodes.filter((n) => n.label.toLowerCase().includes(q)).map((n) => n.id));
+    return new Set(
+      doc.nodes
+        .filter(
+          (n) => n.label.toLowerCase().includes(q) || (n.name ?? "").toLowerCase().includes(q),
+        )
+        .map((n) => n.id),
+    );
   }, [search, doc.nodes]);
 
   const selectedIdSet = useMemo(() => new Set(selectedIds), [selectedIds]);
@@ -310,7 +415,8 @@ export function FlowchartEditor() {
       ...e,
       id: prefix + e.id,
       from: remap.get(e.from)!,
-      to: remap.get(e.to)!,
+      to: e.to ? remap.get(e.to)! : undefined,
+      toPoint: e.to ? undefined : e.toPoint,
     }));
     setDoc((d) => ({ nodes: [...d.nodes, ...newNodes], edges: [...d.edges, ...newEdges] }));
   };
@@ -333,6 +439,68 @@ export function FlowchartEditor() {
       y: (sy - rect.top - currentView.y) / currentView.k,
     };
   }, []);
+
+  const setActivePendingEdge = useCallback((edge: PendingEdge | null) => {
+    pendingEdgeRef.current = edge;
+    setPendingEdge(edge);
+  }, []);
+
+  const updatePendingEdgePoint = useCallback(
+    (clientX: number, clientY: number) => {
+      const pending = pendingEdgeRef.current;
+      if (!pending) return;
+      const w = screenToWorld(clientX, clientY);
+      setActivePendingEdge({ ...pending, x: w.x, y: w.y });
+    },
+    [screenToWorld, setActivePendingEdge],
+  );
+
+  const finishPendingEdgeOn = useCallback(
+    (toId: string) => {
+      const pending = pendingEdgeRef.current;
+      if (!pending) return;
+      if (canConnectFlowNodes(docRef.current, { from: pending.from, to: toId })) {
+        const id = uid();
+        setDoc((d) => connectFlowNodes(d, { id, from: pending.from, to: toId }));
+        setSelectedEdge(id);
+      }
+      setActivePendingEdge(null);
+    },
+    [setDoc, setActivePendingEdge],
+  );
+
+  const finishPendingEdgeAt = useCallback(
+    (clientX?: number, clientY?: number) => {
+      const pending = pendingEdgeRef.current;
+      if (!pending) return;
+
+      if (typeof clientX === "number" && typeof clientY === "number") {
+        const point = screenToWorld(clientX, clientY);
+        const target = findTopNodeAtPoint(
+          docRef.current.nodes.filter((node) => node.kind !== "group"),
+          point,
+          {
+            excludeId: pending.from,
+          },
+        );
+
+        if (target && canConnectFlowNodes(docRef.current, { from: pending.from, to: target.id })) {
+          const id = uid();
+          setDoc((d) => connectFlowNodes(d, { id, from: pending.from, to: target.id }));
+          setSelectedEdge(id);
+        } else if (canConnectFlowNodes(docRef.current, { from: pending.from, toPoint: point })) {
+          const id = uid();
+          setDoc((d) => connectFlowNodes(d, { id, from: pending.from, toPoint: point }));
+          setSelected(null);
+          setSelectedIds([]);
+          setSelectedEdge(id);
+        }
+      }
+
+      setActivePendingEdge(null);
+    },
+    [screenToWorld, setDoc, setActivePendingEdge],
+  );
 
   const addNode = (kind: SymbolKind) => {
     const def = SYMBOLS[kind];
@@ -357,15 +525,21 @@ export function FlowchartEditor() {
     setDocRaw((d) => ({ ...d, nodes: d.nodes.map((n) => (n.id === id ? { ...n, ...patch } : n)) }));
   }, []);
 
+  const updateNodeTextStyle = useCallback(
+    (id: string, patch: FlowNodeTextStyle, options: { fitText?: boolean } = {}) => {
+      const node = docRef.current.nodes.find((n) => n.id === id);
+      if (!node) return;
+      const nextStyle = { ...resolveTextStyle(node), ...patch };
+      updateNode(id, {
+        textStyle: parseTextStyle(nextStyle, node),
+        ...(options.fitText ? fitNodeToText(node, nextStyle) : {}),
+      });
+    },
+    [updateNode],
+  );
+
   const updateNodes = useCallback((positions: Array<{ id: string; x: number; y: number }>) => {
-    const byId = new Map(positions.map((position) => [position.id, position]));
-    setDocRaw((d) => ({
-      ...d,
-      nodes: d.nodes.map((node) => {
-        const position = byId.get(node.id);
-        return position ? { ...node, x: position.x, y: position.y } : node;
-      }),
-    }));
+    setDocRaw((d) => moveNodesTo(d, positions));
   }, []);
 
   const setActiveSelectionBox = useCallback((box: SelectionBox | null) => {
@@ -396,15 +570,7 @@ export function FlowchartEditor() {
     const rect = normalizeSelectionBox(box);
     if (Math.max(rect.w, rect.h) < 4) {
       const point = { x: box.x, y: box.y };
-      const node = [...docRef.current.nodes]
-        .reverse()
-        .find(
-          (node) =>
-            point.x >= node.x - node.w / 2 &&
-            point.x <= node.x + node.w / 2 &&
-            point.y >= node.y - node.h / 2 &&
-            point.y <= node.y + node.h / 2,
-        );
+      const node = findTopNodeAtPoint(docRef.current.nodes, point);
       return node ? [node] : [];
     }
     return docRef.current.nodes.filter((node) => nodeIntersectsSelection(node, rect));
@@ -430,7 +596,7 @@ export function FlowchartEditor() {
       const idsToDelete = new Set(selectedIds);
       setDoc((d) => ({
         nodes: d.nodes.filter((n) => !idsToDelete.has(n.id)),
-        edges: d.edges.filter((e) => !idsToDelete.has(e.from) && !idsToDelete.has(e.to)),
+        edges: d.edges.filter((e) => !idsToDelete.has(e.from) && (!e.to || !idsToDelete.has(e.to))),
       }));
       clearSelection();
       return;
@@ -470,24 +636,6 @@ export function FlowchartEditor() {
     };
   };
 
-  const handleMouseMove = (e: React.MouseEvent) => {
-    if (selectionBoxRef.current) {
-      updateSelectionBox(e.clientX, e.clientY);
-    } else if (dragRef.current) {
-      moveDraggedNode(e.clientX, e.clientY);
-    } else if (pendingEdge) {
-      const w = screenToWorld(e.clientX, e.clientY);
-      setPendingEdge({ ...pendingEdge, x: w.x, y: w.y });
-    } else if (panRef.current) {
-      const pan = panRef.current;
-      setView((v) => ({
-        ...v,
-        x: pan.vx + (e.clientX - pan.x),
-        y: pan.vy + (e.clientY - pan.y),
-      }));
-    }
-  };
-
   const moveDraggedNode = useCallback(
     (clientX: number, clientY: number) => {
       if (!dragRef.current) return;
@@ -512,17 +660,207 @@ export function FlowchartEditor() {
     [commit, screenToWorld, updateNodes],
   );
 
+  const startResize = (nodeId: string, handle: ResizeHandle, e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const node = docRef.current.nodes.find((n) => n.id === nodeId);
+    if (!node) return;
+    const w = screenToWorld(e.clientX, e.clientY);
+    const { minWidth, minHeight } = getNodeResizeMinSize(node);
+    resizeRef.current = {
+      nodeId,
+      handle,
+      startWorldX: w.x,
+      startWorldY: w.y,
+      startClientX: e.clientX,
+      startClientY: e.clientY,
+      initialWidth: node.w,
+      initialHeight: node.h,
+      initialX: node.x,
+      initialY: node.y,
+      minWidth,
+      minHeight,
+      committed: false,
+    };
+  };
+
+  const moveResizedNode = useCallback(
+    (clientX: number, clientY: number) => {
+      if (!resizeRef.current) return;
+      const resize = resizeRef.current;
+      if (!resize.committed) {
+        const distance = Math.hypot(clientX - resize.startClientX, clientY - resize.startClientY);
+        if (distance < 4) return;
+        commit();
+        resize.committed = true;
+      }
+      const w = screenToWorld(clientX, clientY);
+      const dx = w.x - resize.startWorldX;
+      const dy = w.y - resize.startWorldY;
+
+      let newW = resize.initialWidth;
+      let newH = resize.initialHeight;
+      let newX = resize.initialX;
+      let newY = resize.initialY;
+
+      const resizingWidth = resize.handle.includes("e") || resize.handle.includes("w");
+      const resizingHeight = resize.handle.includes("n") || resize.handle.includes("s");
+
+      if (resize.handle.includes("e")) {
+        newW = Math.max(resize.minWidth, resize.initialWidth + dx);
+        newX = resize.initialX + (newW - resize.initialWidth) / 2;
+      }
+      if (resize.handle.includes("w")) {
+        newW = Math.max(resize.minWidth, resize.initialWidth - dx);
+        newX = resize.initialX - (newW - resize.initialWidth) / 2;
+      }
+      if (resize.handle.includes("s")) {
+        newH = Math.max(resize.minHeight, resize.initialHeight + dy);
+        newY = resize.initialY + (newH - resize.initialHeight) / 2;
+      }
+      if (resize.handle.includes("n")) {
+        newH = Math.max(resize.minHeight, resize.initialHeight - dy);
+        newY = resize.initialY - (newH - resize.initialHeight) / 2;
+      }
+
+      if (resizingWidth) {
+        newW = snapToGrid(newW);
+        newX = snapToGrid(newX);
+      }
+      if (resizingHeight) {
+        newH = snapToGrid(newH);
+        newY = snapToGrid(newY);
+      }
+
+      updateNode(resize.nodeId, { w: newW, h: newH, x: newX, y: newY });
+    },
+    [commit, screenToWorld, updateNode],
+  );
+
+  const moveEdgeEndpoint = useCallback(
+    (clientX: number, clientY: number) => {
+      const drag = edgeEndpointDragRef.current;
+      if (!drag) return;
+      if (!drag.committed) {
+        const distance = Math.hypot(clientX - drag.startClientX, clientY - drag.startClientY);
+        if (distance < 4) return;
+        commit();
+        drag.committed = true;
+      }
+      const point = screenToWorld(clientX, clientY);
+      setDocRaw((d) => ({
+        ...d,
+        edges: d.edges.map((edge) =>
+          edge.id === drag.edgeId
+            ? {
+                ...edge,
+                to: undefined,
+                toPoint: {
+                  x: Math.round(point.x / 8) * 8,
+                  y: Math.round(point.y / 8) * 8,
+                },
+              }
+            : edge,
+        ),
+      }));
+    },
+    [commit, screenToWorld],
+  );
+
+  const finishEdgeEndpointDrag = useCallback(
+    (clientX?: number, clientY?: number) => {
+      const drag = edgeEndpointDragRef.current;
+      if (!drag) return false;
+      edgeEndpointDragRef.current = null;
+
+      const edge = docRef.current.edges.find((currentEdge) => currentEdge.id === drag.edgeId);
+      if (!edge || !drag.committed || typeof clientX !== "number" || typeof clientY !== "number") {
+        return true;
+      }
+
+      const target = findTopNodeAtPoint(
+        docRef.current.nodes.filter((node) => node.kind !== "group"),
+        screenToWorld(clientX, clientY),
+        {
+          excludeId: edge.from,
+        },
+      );
+      if (
+        !target ||
+        !canConnectFlowNodes(
+          docRef.current,
+          {
+            from: edge.from,
+            to: target.id,
+            label: edge.label,
+            kind: edge.kind,
+            fromPort: edge.fromPort,
+          },
+          { forbidCycles: true, ignoreEdgeId: edge.id },
+        )
+      ) {
+        return true;
+      }
+
+      setDocRaw((d) => {
+        const currentEdge = d.edges.find((candidate) => candidate.id === edge.id);
+        if (!currentEdge) return d;
+        const withoutEdge = {
+          ...d,
+          edges: d.edges.filter((candidate) => candidate.id !== edge.id),
+        };
+        const reconnected = connectFlowNodes(withoutEdge, {
+          id: currentEdge.id,
+          from: currentEdge.from,
+          to: target.id,
+          label: currentEdge.label,
+          kind: currentEdge.kind,
+          fromPort: currentEdge.fromPort,
+        });
+        const replacement = reconnected.edges.at(-1);
+        if (!replacement) return d;
+        return {
+          ...d,
+          edges: d.edges.map((candidate) => (candidate.id === edge.id ? replacement : candidate)),
+        };
+      });
+      return true;
+    },
+    [screenToWorld],
+  );
+
+  const startEdgeEndpointDrag = (edgeId: string, e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setSelected(null);
+    setSelectedIds([]);
+    setSelectedEdge(edgeId);
+    edgeEndpointDragRef.current = {
+      edgeId,
+      startClientX: e.clientX,
+      startClientY: e.clientY,
+      committed: false,
+    };
+  };
+
   const handleMouseUp = useCallback(
     (clientX?: number, clientY?: number) => {
       if (selectionBoxRef.current) {
         finishSelectionBox(clientX, clientY);
         return;
       }
+      if (finishEdgeEndpointDrag(clientX, clientY)) {
+        dragRef.current = null;
+        resizeRef.current = null;
+        panRef.current = null;
+        return;
+      }
+      finishPendingEdgeAt(clientX, clientY);
       dragRef.current = null;
+      resizeRef.current = null;
       panRef.current = null;
-      setPendingEdge(null);
     },
-    [finishSelectionBox],
+    [finishEdgeEndpointDrag, finishPendingEdgeAt, finishSelectionBox],
   );
 
   useEffect(() => {
@@ -531,7 +869,22 @@ export function FlowchartEditor() {
         updateSelectionBox(e.clientX, e.clientY);
         return;
       }
-      if (dragRef.current) moveDraggedNode(e.clientX, e.clientY);
+      if (resizeRef.current) {
+        moveResizedNode(e.clientX, e.clientY);
+        return;
+      }
+      if (dragRef.current) {
+        moveDraggedNode(e.clientX, e.clientY);
+        return;
+      }
+      if (edgeEndpointDragRef.current) {
+        moveEdgeEndpoint(e.clientX, e.clientY);
+        return;
+      }
+      if (pendingEdgeRef.current) {
+        updatePendingEdgePoint(e.clientX, e.clientY);
+        return;
+      }
       if (panRef.current) {
         const pan = panRef.current;
         setView((v) => ({
@@ -548,7 +901,14 @@ export function FlowchartEditor() {
       window.removeEventListener("mousemove", onMouseMove);
       window.removeEventListener("mouseup", onMouseUp);
     };
-  }, [handleMouseUp, moveDraggedNode, updateSelectionBox]);
+  }, [
+    handleMouseUp,
+    moveDraggedNode,
+    moveEdgeEndpoint,
+    moveResizedNode,
+    updatePendingEdgePoint,
+    updateSelectionBox,
+  ]);
 
   const handleSvgMouseDown = (e: React.MouseEvent) => {
     if (e.button !== 0) return;
@@ -562,22 +922,19 @@ export function FlowchartEditor() {
   };
 
   const startEdge = (fromId: string, e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
     if (e.shiftKey) {
       startSelectionBox(e.clientX, e.clientY);
       return;
     }
     const w = screenToWorld(e.clientX, e.clientY);
     clearSelection();
-    setPendingEdge({ from: fromId, x: w.x, y: w.y });
+    setActivePendingEdge({ from: fromId, x: w.x, y: w.y });
   };
 
   const finishEdgeOn = (toId: string) => {
-    if (!pendingEdge || pendingEdge.from === toId) return;
-    setDoc((d) => ({
-      ...d,
-      edges: [...d.edges, { id: uid(), from: pendingEdge.from, to: toId }],
-    }));
-    setPendingEdge(null);
+    finishPendingEdgeOn(toId);
   };
 
   const handleWheel = (e: React.WheelEvent) => {
@@ -706,8 +1063,11 @@ export function FlowchartEditor() {
   };
 
   const selectedNode = doc.nodes.find((n) => n.id === selected) ?? null;
+  const selectedNodeTextStyle = selectedNode ? resolveTextStyle(selectedNode) : null;
   const selectedNodeCount = selectedIds.length;
   const selectedEdgeData = doc.edges.find((e) => e.id === selectedEdge) ?? null;
+  const groupNodes = doc.nodes.filter((node) => node.kind === "group");
+  const flowNodes = doc.nodes.filter((node) => node.kind !== "group");
 
   const validation = validateFlow(doc);
 
@@ -915,7 +1275,7 @@ export function FlowchartEditor() {
           <input
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder="Filtrar por texto do símbolo…"
+            placeholder="Filtrar por texto ou nome..."
             className="mb-1 w-full rounded-md border border-input bg-background px-2 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-ring"
           />
           {search && (
@@ -950,7 +1310,8 @@ export function FlowchartEditor() {
               <li>Shift + arrastar: selecionar por área</li>
               <li>Duplo-clique foca a edição no painel</li>
               <li>Clique numa seta para editar ou remover</li>
-              <li>Arraste a bolinha amarela até outro símbolo para conectar</li>
+              <li>Arraste o círculo de conexão para outro símbolo ou para um ponto livre</li>
+              <li>Selecione uma seta e puxe o círculo azul para ajustar a ponta</li>
               <li>Delete remove o selecionado</li>
               <li>Roda do mouse: zoom · Arrastar fundo: mover</li>
             </ul>
@@ -971,7 +1332,6 @@ export function FlowchartEditor() {
             ref={svgRef}
             className="relative h-full w-full"
             onMouseDown={handleSvgMouseDown}
-            onMouseMove={handleMouseMove}
             onMouseUp={(e) => handleMouseUp(e.clientX, e.clientY)}
             onWheel={handleWheel}
           >
@@ -989,87 +1349,219 @@ export function FlowchartEditor() {
               </marker>
             </defs>
             <g id="world" transform={`translate(${view.x}, ${view.y}) scale(${view.k})`}>
-              {/* edges */}
-              {doc.edges.map((e) => {
-                const from = doc.nodes.find((n) => n.id === e.from);
-                const to = doc.nodes.find((n) => n.id === e.to);
-                if (!from || !to) return null;
-                const { d, mid } = edgePath(from, to);
-                const edgeSelected = selectedEdge === e.id;
+              {/* groups */}
+              {groupNodes.map((n) => {
+                const dim = matchedIds && !matchedIds.has(n.id);
                 return (
-                  <g key={e.id}>
-                    <path
-                      d={d}
-                      fill="none"
-                      stroke={edgeSelected ? "var(--color-node-selected)" : "var(--color-edge)"}
-                      strokeWidth={edgeSelected ? 3 : 2}
-                      markerEnd="url(#arrow)"
-                    />
-                    {e.label && (
-                      <g transform={`translate(${mid.x}, ${mid.y})`}>
-                        <rect
-                          x={-18}
-                          y={-10}
-                          width={36}
-                          height={18}
-                          rx={4}
-                          fill="var(--color-card)"
-                          stroke={
-                            edgeSelected ? "var(--color-node-selected)" : "var(--color-border)"
-                          }
-                        />
-                        <text
-                          textAnchor="middle"
-                          y={4}
-                          fontSize={11}
-                          fill="var(--color-foreground)"
-                        >
-                          {e.label}
-                        </text>
-                      </g>
-                    )}
-                    <path
-                      d={d}
-                      fill="none"
-                      stroke="transparent"
-                      strokeWidth={12}
-                      onClick={(ev) => {
-                        ev.stopPropagation();
-                        setSelected(null);
-                        setSelectedIds([]);
-                        setSelectedEdge(e.id);
+                  <g key={n.id} style={{ opacity: dim ? 0.25 : 1, transition: "opacity .15s" }}>
+                    <NodeShape
+                      node={n}
+                      selected={
+                        selectedIdSet.has(n.id) ||
+                        (selectionPreviewIdSet?.has(n.id) ?? false) ||
+                        (matchedIds?.has(n.id) ?? false)
+                      }
+                      onMouseDown={(e) => handleNodeMouseDown(n, e)}
+                      onDoubleClick={(e) => {
+                        e.preventDefault();
+                        focusLabelEditor(n.id);
                       }}
-                      onDoubleClick={(ev) => {
-                        ev.preventDefault();
-                        ev.stopPropagation();
-                        focusEdgeLabelEditor(e.id);
-                      }}
-                      style={{ cursor: "pointer" }}
+                      onResizeHandleMouseDown={(handle, e) => startResize(n.id, handle, e)}
                     />
                   </g>
                 );
               })}
 
+              {/* edges */}
+              {(() => {
+                const curves = computeEdgeCurves(doc.edges);
+                return doc.edges.map((e) => {
+                  const from = flowNodes.find((n) => n.id === e.from);
+                  const to = e.to ? flowNodes.find((n) => n.id === e.to) : null;
+                  if (!from || (!to && !e.toPoint)) return null;
+                  const routeOptions = {
+                    fromSide: e.fromPort,
+                    kind: e.kind,
+                    curve: curves.get(e.id) ?? 0,
+                  };
+                  const { d, mid } = to
+                    ? edgePath(from, to, routeOptions)
+                    : edgePathToPoint(from, e.toPoint!, routeOptions);
+                  const edgeSelected = selectedEdge === e.id;
+                  const terminalPoint = e.toPoint ?? pathEndPoint(d);
+                  return (
+                    <g key={e.id}>
+                      {/* Hit area (must be first so it's on top) */}
+                      <path
+                        d={d}
+                        fill="none"
+                        stroke="transparent"
+                        strokeWidth={12}
+                        onClick={(ev) => {
+                          ev.stopPropagation();
+                          setSelected(null);
+                          setSelectedIds([]);
+                          setSelectedEdge(e.id);
+                        }}
+                        onDoubleClick={(ev) => {
+                          ev.preventDefault();
+                          ev.stopPropagation();
+                          focusEdgeLabelEditor(e.id);
+                        }}
+                        style={{ cursor: "pointer", pointerEvents: "auto" }}
+                        pointerEvents="auto"
+                      />
+                      {/* Visual path */}
+                      <path
+                        d={d}
+                        fill="none"
+                        stroke={
+                          e.kind === "true"
+                            ? "var(--color-success)"
+                            : e.kind === "false"
+                              ? "var(--color-danger)"
+                              : edgeSelected
+                                ? "var(--color-node-selected)"
+                                : "var(--color-edge)"
+                        }
+                        strokeWidth={edgeSelected ? 3 : 2}
+                        strokeDasharray={
+                          e.kind === "loop" || e.kind === "return" ? "6 4" : undefined
+                        }
+                        markerEnd="url(#arrow)"
+                        pointerEvents="none"
+                      />
+                      {edgeSelected && terminalPoint && (
+                        <g>
+                          <circle
+                            cx={terminalPoint.x}
+                            cy={terminalPoint.y}
+                            r={13}
+                            fill="transparent"
+                            onMouseDown={(ev) => startEdgeEndpointDrag(e.id, ev)}
+                            style={{ cursor: "grab", pointerEvents: "auto" }}
+                          />
+                          <circle
+                            cx={terminalPoint.x}
+                            cy={terminalPoint.y}
+                            r={7}
+                            fill="#3b82f6"
+                            stroke="var(--color-card)"
+                            strokeWidth={2}
+                            pointerEvents="none"
+                          />
+                        </g>
+                      )}
+                      {e.label && (
+                        <g transform={`translate(${mid.x}, ${mid.y})`}>
+                          <rect
+                            x={-18}
+                            y={-10}
+                            width={36}
+                            height={18}
+                            rx={4}
+                            fill="var(--color-card)"
+                            stroke={
+                              edgeSelected ? "var(--color-node-selected)" : "var(--color-border)"
+                            }
+                          />
+                          <text
+                            textAnchor="middle"
+                            y={4}
+                            fontSize={11}
+                            fill="var(--color-foreground)"
+                          >
+                            {e.label}
+                          </text>
+                        </g>
+                      )}
+                    </g>
+                  );
+                });
+              })()}
+
               {/* pending edge */}
               {pendingEdge &&
                 (() => {
-                  const from = doc.nodes.find((n) => n.id === pendingEdge.from);
+                  const from = flowNodes.find((n) => n.id === pendingEdge.from);
                   if (!from) return null;
+
+                  // Calculate Bezier control points
+                  const dx = pendingEdge.x - from.x;
+                  const dy = pendingEdge.y - from.y;
+                  const len = Math.hypot(dx, dy) || 1;
+                  const perpX = -dy / len;
+                  const perpY = dx / len;
+
+                  const cp1x = from.x + dx * 0.35 + perpX * (pendingEdge.curve ?? 0);
+                  const cp1y = from.y + dy * 0.35 + perpY * (pendingEdge.curve ?? 0);
+                  const cp2x = pendingEdge.x - dx * 0.35 + perpX * (pendingEdge.curve ?? 0);
+                  const cp2y = pendingEdge.y - dy * 0.35 + perpY * (pendingEdge.curve ?? 0);
+
                   return (
-                    <line
-                      x1={from.x}
-                      y1={from.y}
-                      x2={pendingEdge.x}
-                      y2={pendingEdge.y}
-                      stroke="var(--color-accent)"
-                      strokeWidth={2}
-                      strokeDasharray="6 4"
-                    />
+                    <g>
+                      {/* Main pending edge line */}
+                      <line
+                        x1={from.x}
+                        y1={from.y}
+                        x2={pendingEdge.x}
+                        y2={pendingEdge.y}
+                        stroke="var(--color-accent)"
+                        strokeWidth={2}
+                        strokeDasharray="6 4"
+                      />
+
+                      {/* Helper lines to control points */}
+                      <line
+                        x1={from.x}
+                        y1={from.y}
+                        x2={cp1x}
+                        y2={cp1y}
+                        stroke="var(--color-accent)"
+                        strokeWidth={1}
+                        opacity={0.3}
+                        strokeDasharray="2 2"
+                        pointerEvents="none"
+                      />
+                      <line
+                        x1={pendingEdge.x}
+                        y1={pendingEdge.y}
+                        x2={cp2x}
+                        y2={cp2y}
+                        stroke="var(--color-accent)"
+                        strokeWidth={1}
+                        opacity={0.3}
+                        strokeDasharray="2 2"
+                        pointerEvents="none"
+                      />
+
+                      {/* Blue control point circles */}
+                      <circle
+                        cx={cp1x}
+                        cy={cp1y}
+                        r={8}
+                        fill="none"
+                        stroke="#3b82f6"
+                        strokeWidth={2}
+                        opacity={0.7}
+                        style={{ pointerEvents: "none" }}
+                      />
+                      <circle
+                        cx={cp2x}
+                        cy={cp2y}
+                        r={8}
+                        fill="none"
+                        stroke="#3b82f6"
+                        strokeWidth={2}
+                        opacity={0.7}
+                        style={{ pointerEvents: "none" }}
+                      />
+                    </g>
                   );
                 })()}
 
               {/* nodes */}
-              {doc.nodes.map((n) => {
+              {flowNodes.map((n) => {
                 const dim = matchedIds && !matchedIds.has(n.id);
                 return (
                   <g key={n.id} style={{ opacity: dim ? 0.25 : 1, transition: "opacity .15s" }}>
@@ -1087,6 +1579,7 @@ export function FlowchartEditor() {
                       }}
                       onPortMouseDown={(_, e) => startEdge(n.id, e)}
                       onPortMouseUp={() => finishEdgeOn(n.id)}
+                      onResizeHandleMouseDown={(handle, e) => startResize(n.id, handle, e)}
                     />
                   </g>
                 );
@@ -1114,8 +1607,8 @@ export function FlowchartEditor() {
           </svg>
 
           {/* Inspector */}
-          {selectedNode && (
-            <div className="absolute right-4 top-4 w-64 rounded-lg border border-border bg-card p-4 shadow-lg">
+          {selectedNode && selectedNodeTextStyle && (
+            <div className="absolute right-4 top-4 max-h-[calc(100%-2rem)] w-80 overflow-y-auto rounded-lg border border-border bg-card p-4 shadow-lg">
               <div className="mb-2 flex items-center justify-between">
                 <span className="text-xs font-bold uppercase tracking-widest text-muted-foreground">
                   {SYMBOLS[selectedNode.kind].name}
@@ -1127,15 +1620,156 @@ export function FlowchartEditor() {
                   Excluir
                 </button>
               </div>
-              <label className="mb-1 block text-xs font-medium">Texto</label>
+              <label className="mb-1 block text-xs font-medium">Nome técnico</label>
+              <input
+                value={selectedNode.name ?? ""}
+                onFocus={() => commit()}
+                onChange={(e) => updateNode(selectedNode.id, { name: e.target.value || undefined })}
+                placeholder="Ex: MenuInicial, SeedAlunos"
+                className="mb-3 w-full rounded-md border border-input bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+              />
+
+              <label className="mb-1 block text-xs font-medium">
+                {selectedNode.kind === "group" ? "Título do grupo" : "Texto"}
+              </label>
               <textarea
                 ref={inspectorTextRef}
                 value={selectedNode.label}
                 onFocus={() => commit()}
                 onChange={(e) => updateNode(selectedNode.id, { label: e.target.value })}
                 className="w-full resize-none rounded-md border border-input bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
-                rows={3}
+                rows={selectedNode.kind === "group" ? 2 : 6}
               />
+
+              <div className="mt-3 grid grid-cols-2 gap-2">
+                <div>
+                  <label className="mb-1 block text-xs font-medium">Alinhamento</label>
+                  <Select
+                    value={selectedNodeTextStyle.align}
+                    onValueChange={(value) => {
+                      commit();
+                      updateNodeTextStyle(selectedNode.id, { align: value as NodeTextAlign });
+                    }}
+                  >
+                    <SelectTrigger className="w-full">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {TEXT_ALIGN_OPTIONS.map((option) => (
+                        <SelectItem key={option.value} value={option.value}>
+                          {option.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                {selectedNode.kind !== "group" && (
+                  <div>
+                    <label className="mb-1 block text-xs font-medium">Formato</label>
+                    <Select
+                      value={selectedNodeTextStyle.listStyle}
+                      onValueChange={(value) => {
+                        commit();
+                        updateNodeTextStyle(selectedNode.id, {
+                          listStyle: value as NodeTextListStyle,
+                        });
+                      }}
+                    >
+                      <SelectTrigger className="w-full">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {TEXT_LIST_OPTIONS.map((option) => (
+                          <SelectItem key={option.value} value={option.value}>
+                            {option.label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                )}
+
+                <div>
+                  <label className="mb-1 block text-xs font-medium">Fonte</label>
+                  <Select
+                    value={selectedNodeTextStyle.fontFamily}
+                    onValueChange={(value) => {
+                      commit();
+                      updateNodeTextStyle(selectedNode.id, {
+                        fontFamily: value as NodeFontFamily,
+                      });
+                    }}
+                  >
+                    <SelectTrigger className="w-full">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {FONT_FAMILY_OPTIONS.map((option) => (
+                        <SelectItem key={option.value} value={option.value}>
+                          {option.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div>
+                  <label className="mb-1 block text-xs font-medium">Tamanho</label>
+                  <input
+                    type="number"
+                    min={8}
+                    max={28}
+                    value={selectedNodeTextStyle.fontSize}
+                    onFocus={() => commit()}
+                    onChange={(e) =>
+                      updateNodeTextStyle(
+                        selectedNode.id,
+                        { fontSize: Number(e.target.value) },
+                        { fitText: true },
+                      )
+                    }
+                    className="w-full rounded-md border border-input bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                  />
+                </div>
+
+                <div>
+                  <label className="mb-1 block text-xs font-medium">Entrelinhas</label>
+                  <input
+                    type="number"
+                    min={0.9}
+                    max={2}
+                    step={0.05}
+                    value={selectedNodeTextStyle.lineHeight}
+                    onFocus={() => commit()}
+                    onChange={(e) =>
+                      updateNodeTextStyle(
+                        selectedNode.id,
+                        { lineHeight: Number(e.target.value) },
+                        { fitText: true },
+                      )
+                    }
+                    className="w-full rounded-md border border-input bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                  />
+                </div>
+              </div>
+
+              {selectedNode.kind === "group" && (
+                <>
+                  <label className="mb-1 mt-3 block text-xs font-medium">Cor do Grupo</label>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="color"
+                      value={selectedNode.color ?? "#FFA500"}
+                      onChange={(e) => updateNode(selectedNode.id, { color: e.target.value })}
+                      className="h-10 w-16 cursor-pointer rounded-md border border-input"
+                    />
+                    <span className="text-xs text-muted-foreground">
+                      {selectedNode.color ?? "Padrão (Laranja)"}
+                    </span>
+                  </div>
+                </>
+              )}
               <p className="mt-2 text-[11px] text-muted-foreground">
                 {SYMBOLS[selectedNode.kind].description}
               </p>
@@ -1191,8 +1825,138 @@ export function FlowchartEditor() {
                 placeholder="Ex: Sim, Não"
                 className="w-full rounded-md border border-input bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
               />
-              <p className="mt-2 text-[11px] text-muted-foreground">
-                Use o rótulo para indicar saídas de decisão ou condições de fluxo.
+              <label className="mb-1 mt-3 block text-xs font-medium">Tipo de Aresta</label>
+              <Select
+                value={selectedEdgeData.kind ?? "default"}
+                onValueChange={(val) => {
+                  setDocRaw((d) => ({
+                    ...d,
+                    edges: d.edges.map((e) =>
+                      e.id === selectedEdgeData.id ? { ...e, kind: val as EdgeKind } : e,
+                    ),
+                  }));
+                }}
+              >
+                <SelectTrigger className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="default">Padrão</SelectItem>
+                  <SelectItem value="true">Sim (true)</SelectItem>
+                  <SelectItem value="false">Não (false)</SelectItem>
+                  <SelectItem value="loop">Loop</SelectItem>
+                  <SelectItem value="return">Retorno</SelectItem>
+                </SelectContent>
+              </Select>
+              <label className="mb-1 mt-3 block text-xs font-medium">Saída do Nó</label>
+              <Select
+                value={selectedEdgeData.fromPort ?? "auto"}
+                onValueChange={(val) => {
+                  setDocRaw((d) => ({
+                    ...d,
+                    edges: d.edges.map((e) =>
+                      e.id === selectedEdgeData.id
+                        ? { ...e, fromPort: val === "auto" ? undefined : (val as PortSide) }
+                        : e,
+                    ),
+                  }));
+                }}
+              >
+                <SelectTrigger className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="auto">Automática</SelectItem>
+                  <SelectItem value="top">Topo</SelectItem>
+                  <SelectItem value="right">Direita</SelectItem>
+                  <SelectItem value="bottom">Base</SelectItem>
+                  <SelectItem value="left">Esquerda</SelectItem>
+                </SelectContent>
+              </Select>
+              <label className="mb-1 mt-3 block text-xs font-medium">De Nó</label>
+              <Select
+                value={selectedEdgeData.from}
+                onValueChange={(val) => {
+                  if (val === selectedEdgeData.to) return;
+                  if (
+                    !canConnectFlowNodes(
+                      doc,
+                      {
+                        from: val,
+                        to: selectedEdgeData.to,
+                        toPoint: selectedEdgeData.toPoint,
+                        label: selectedEdgeData.label,
+                        kind: selectedEdgeData.kind,
+                      },
+                      { forbidCycles: true, ignoreEdgeId: selectedEdgeData.id },
+                    )
+                  ) {
+                    return;
+                  }
+                  setDocRaw((d) => ({
+                    ...d,
+                    edges: d.edges.map((e) =>
+                      e.id === selectedEdgeData.id ? { ...e, from: val } : e,
+                    ),
+                  }));
+                }}
+              >
+                <SelectTrigger className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {doc.nodes.map((node) => (
+                    <SelectItem key={node.id} value={node.id}>
+                      {node.label} ({node.id})
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <label className="mb-1 mt-3 block text-xs font-medium">Para Nó</label>
+              <Select
+                value={selectedEdgeData.to ?? "__free__"}
+                onValueChange={(val) => {
+                  if (val === "__free__") return;
+                  if (val === selectedEdgeData.from) return;
+                  if (
+                    !canConnectFlowNodes(
+                      doc,
+                      {
+                        from: selectedEdgeData.from,
+                        to: val,
+                        label: selectedEdgeData.label,
+                        kind: selectedEdgeData.kind,
+                      },
+                      { forbidCycles: true, ignoreEdgeId: selectedEdgeData.id },
+                    )
+                  ) {
+                    return;
+                  }
+                  setDocRaw((d) => ({
+                    ...d,
+                    edges: d.edges.map((e) =>
+                      e.id === selectedEdgeData.id ? { ...e, to: val, toPoint: undefined } : e,
+                    ),
+                  }));
+                }}
+              >
+                <SelectTrigger className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__free__" disabled>
+                    Ponto livre
+                  </SelectItem>
+                  {doc.nodes.map((node) => (
+                    <SelectItem key={node.id} value={node.id}>
+                      {node.label} ({node.id})
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="mt-3 text-[11px] text-muted-foreground">
+                Tipo e direção definem a renderização visual da aresta no fluxograma. Use "De Nó" e
+                "Para Nó" para reconectar a aresta.
               </p>
             </div>
           )}

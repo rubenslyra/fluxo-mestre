@@ -1,7 +1,7 @@
-// Catálogo de desafios para provocar pensamento lógico antes da codificação.
+// Catálogo de desafios para conectar lógica formal, ISO 5807 e geração de código.
 // Inspirado em "Fundamentos da Lógica Formal Aplicados ao Desenvolvimento de Software" (Rubens Lyra)
 // e na ISO 5807. Cada desafio guia o aluno por: entender → questionar → decompor →
-// modelar premissas → esboçar fluxo → comparar com referência.
+// modelar premissas → esboçar fluxo → comparar com referência → preparar testes.
 
 export type Difficulty = "iniciante" | "intermediário" | "avançado";
 
@@ -29,7 +29,7 @@ export type Challenge = {
   referenceFlow: string[];
   pitfalls: string[];
   logicConcept: string;
-  // NOVOS — para responder o aluno crítico ("por que estudar isso?")
+  // Campos de apoio para responder o aluno crítico ("por que estudar isso?")
   whyItMatters: string; // justificativa pedagógica em 1-2 frases
   realWorldApplications: string[]; // 3-5 aplicações concretas no mercado
   studentObjections: StudentObjection[]; // perguntas céticas + respostas
@@ -45,7 +45,7 @@ export const CHALLENGES: Challenge[] = [
     logicConcept: "Modus Ponens — Se P → Q",
     scenario: "Um aluno entrega um número inteiro N. O sistema deve dizer se ele é par ou ímpar.",
     whyItMatters:
-      "Não é sobre 'par/ímpar'. É o menor exercício possível para você dominar a estrutura SE → ENTÃO → SENÃO, que é a base de QUALQUER decisão em software.",
+      "Não é sobre 'par/ímpar'. É o menor exercício possível para dominar a estrutura SE → ENTÃO → SENÃO, que sustenta quase toda decisão em software.",
     realWorldApplications: [
       "Distribuir requisições entre dois servidores (load balancing round-robin) usando ID % 2.",
       "Alternar cores de linhas em tabelas (zebra striping) no front-end.",
@@ -189,7 +189,7 @@ export const CHALLENGES: Challenge[] = [
     scenario:
       "“Clientes premium, ativos há mais de 12 meses, recebem 10% de desconto.” Modele o fluxo que decide aplicar ou não o desconto sobre o valor da compra.",
     whyItMatters:
-      "Toda empresa vive de regras de negócio escritas em português ambíguo. Quem traduz mal uma frase vira o desenvolvedor que 'deu prejuízo' — desconto aplicado errado custa dinheiro real.",
+      "Toda empresa vive de regras de negócio escritas em português ambíguo. Traduzir mal uma frase introduz risco de negócio: desconto aplicado errado custa dinheiro real.",
     realWorldApplications: [
       "Cálculo de comissão de vendedores em CRMs (Salesforce, RD Station).",
       "Promoções condicionais em e-commerce (Magento, Shopify, VTEX).",
@@ -201,7 +201,7 @@ export const CHALLENGES: Challenge[] = [
       {
         question: "Mas no trabalho a regra vem pronta do PO, eu só implemento.",
         answer:
-          "Errado. O PO escreve em português. Você é responsável por identificar AMBIGUIDADES — 'mais de 12 meses' inclui o dia 365? E o cliente que era premium e cancelou ontem? Quem não decompõe a frase, implementa o bug.",
+          "Na prática, não é tão simples. O PO escreve em português. Você é responsável por identificar AMBIGUIDADES — 'mais de 12 meses' inclui o dia 365? E o cliente que era premium e cancelou ontem? Quem não decompõe a frase, implementa o bug.",
       },
       {
         question: "Por que não jogar tudo num if só e pronto?",
@@ -311,6 +311,84 @@ export const CHALLENGES: Challenge[] = [
       "Usar > em vez de >= e perder o limite exato.",
       "Criar 3 decisões redundantes em vez de 2 encadeadas.",
       "Calcular a média dentro do losango.",
+    ],
+  },
+  {
+    id: "menu-operacoes",
+    title: "Menu inicial com modos de execução",
+    category: "Entrada, validação e casos de uso",
+    difficulty: "intermediário",
+    logicConcept: "Decisão em cascata com caminho de retorno",
+    scenario:
+      "Um programa exibe um menu inicial: 1 - Testar com 5 alunos, 2 - Seeder com 100 alunos, 3 - Manual oficial com 100 alunos, 0 - Sair. Modele o fluxo para ler a opção, executar o caso correto e tratar opção inválida.",
+    whyItMatters:
+      "Menus simples aparecem em CLIs, ferramentas internas, seeders, rotinas administrativas e protótipos. Ao modelar o menu, você separa interface, validação e caso de uso antes de gerar código.",
+    realWorldApplications: [
+      "Ferramentas CLI para manutenção de banco, importação e seeders.",
+      "Menus administrativos em sistemas legados ou terminais de atendimento.",
+      "Escolha de cenário em testes automatizados e simuladores didáticos.",
+      "Comandos de console em aplicações .NET, Java, Python, Node.js e C++.",
+      "Orquestração de casos de uso em arquitetura hexagonal ou DDD.",
+    ],
+    studentObjections: [
+      {
+        question: "Isso não é só um switch/case?",
+        answer:
+          "Pode virar switch/case, mas o desenho força a separar entrada, validação, execução e retorno ao menu. Essa separação evita que o controlador vire um bloco grande com regra de negócio misturada.",
+      },
+      {
+        question: "Por que falar de arquitetura num menu tão pequeno?",
+        answer:
+          "Porque menus são portas de entrada. Em arquitetura hexagonal, cada opção pode representar um caso de uso. Nomear bem cada opção agora facilita transformar o protótipo em módulo depois.",
+      },
+    ],
+    transferableSkill:
+      "Mapear opções de interface para casos de uso independentes, mantendo validação e repetição fora da regra de negócio.",
+    provocations: [
+      "O menu deve encerrar depois de executar uma opção ou voltar para permitir nova escolha?",
+      "Qual símbolo representa melhor a exibição do menu: saída em tela ou entrada/saída?",
+      "A opção inválida deve finalizar o programa ou retornar para nova leitura?",
+    ],
+    steps: [
+      {
+        title: "Modele a interface",
+        prompt: "Use um símbolo de exibição ou entrada/saída para representar o texto do menu.",
+      },
+      {
+        title: "Leia a opção",
+        prompt: "Separe claramente o momento de entrada de dados da decisão sobre o valor lido.",
+      },
+      {
+        title: "Encadeie as decisões",
+        prompt:
+          "Defina a ordem das comparações: sair primeiro, opções válidas depois ou o contrário?",
+      },
+      {
+        title: "Defina o retorno",
+        prompt: "Mostre no fluxo se cada opção volta ao menu, termina ou segue para outro módulo.",
+      },
+    ],
+    premises: [
+      "opcao é lida como número inteiro",
+      "opções válidas são 0, 1, 2 e 3",
+      "cada opção executa um caso de uso diferente",
+    ],
+    expectedDecisions: ["opcao == 0?", "opcao == 1?", "opcao == 2?", "opcao == 3?"],
+    referenceFlow: [
+      "Início",
+      "Exibir menu inicial",
+      "Ler opcao",
+      "Decisão: opcao == 0? Sim → Fim",
+      "Não → Decisão: opcao == 1? Sim → Executar teste com 5 alunos → Voltar ao menu",
+      "Não → Decisão: opcao == 2? Sim → Executar seeder com 100 alunos → Voltar ao menu",
+      "Não → Decisão: opcao == 3? Sim → Executar manual oficial com 100 alunos → Voltar ao menu",
+      "Não → Exibir opção inválida → Voltar ao menu",
+    ],
+    pitfalls: [
+      "Misturar a impressão do menu com a regra de negócio de cada opção.",
+      "Não tratar opção inválida.",
+      "Criar um loop sem caminho claro para sair.",
+      "Usar rótulos longos como nomes de método em vez de preencher o nome técnico.",
     ],
   },
   {

@@ -1,5 +1,12 @@
 import { describe, expect, test } from "bun:test";
-import { CODE_BLUEPRINTS, CODE_LANGUAGES, generateCode } from "./codeBlueprints";
+import {
+  CODE_BLUEPRINTS,
+  CODE_LANGUAGES,
+  analyzeFlowForCodeSuggestions,
+  generateArtifact,
+  generateCode,
+  getArtifactFileName,
+} from "./codeBlueprints";
 import type { FlowDoc, FlowEdge, FlowNode } from "./types";
 
 type NodeInit = Pick<FlowNode, "id" | "kind" | "label"> &
@@ -90,6 +97,20 @@ const disconnectedDoc = doc([
 ]);
 
 const emptyDoc: FlowDoc = { nodes: [], edges: [] };
+const groupedDoc: FlowDoc = {
+  nodes: [
+    node({ id: "group", kind: "group", label: "Grupo 1", w: 300, h: 220 }),
+    node({ id: "start", kind: "terminator", label: "Início", w: 140, h: 60 }),
+    node({ id: "task", kind: "process", label: "Executar etapa", y: 90 }),
+    node({ id: "end", kind: "terminator", label: "Fim", y: 180, w: 140, h: 60 }),
+  ],
+  edges: [edge("start", "task"), edge("task", "end")],
+};
+const metadata = {
+  title: "Sistema de Notas do Módulo",
+  briefDescription: "Calcula e registra notas finais de alunos.",
+  comments: "Usar em revisão de arquitetura.",
+};
 
 function expectLanguageMarkers(code: string, language: (typeof CODE_LANGUAGES)[number]["id"]) {
   switch (language) {
@@ -256,5 +277,143 @@ describe("generateCode", () => {
       expect(emptyCode).not.toContain("undefined");
       expect(emptyCode.length).toBeGreaterThan(0);
     }
+  });
+
+  test("uses the title as the source for namespaces, classes and filenames", () => {
+    const csharp = generateCode(linearDoc, {
+      language: "csharp",
+      blueprint: "template-method",
+      metadata,
+    });
+    const java = generateCode(linearDoc, {
+      language: "java",
+      blueprint: "strategy",
+      metadata,
+    });
+    const cpp = generateCode(linearDoc, {
+      language: "cpp",
+      blueprint: "procedural",
+      metadata,
+    });
+
+    expect(csharp).toContain("namespace FluxoLab.SistemaDeNotasDoModulo;");
+    expect(csharp).toContain("public sealed class SistemaDeNotasDoModuloFlow");
+    expect(java).toContain("package fluxolab.sistema_de_notas_do_modulo;");
+    expect(java).toContain("public final class SistemaDeNotasDoModuloFlow");
+    expect(cpp).toContain("namespace fluxolab::sistema_de_notas_do_modulo");
+    expect(getArtifactFileName("code", { language: "java", metadata })).toBe(
+      "SistemaDeNotasDoModuloFlow.java",
+    );
+  });
+
+  test("generates UML and database scripts with metadata", () => {
+    const uml = generateArtifact(linearDoc, {
+      artifact: "uml",
+      language: "python",
+      blueprint: "procedural",
+      metadata,
+    });
+    const database = generateArtifact(linearDoc, {
+      artifact: "database",
+      language: "python",
+      blueprint: "procedural",
+      metadata,
+    });
+
+    expect(uml).toContain("@startuml");
+    expect(uml).toContain('title "Sistema de Notas do Módulo"');
+    expect(uml).toContain("S1 --> S2");
+    expect(uml).toContain("Comentarios: Usar em revisão de arquitetura.");
+
+    expect(database).toContain('CREATE SCHEMA IF NOT EXISTS "sistema_de_notas_do_modulo";');
+    expect(database).toContain('CREATE TABLE IF NOT EXISTS "sistema_de_notas_do_modulo".flow_step');
+    expect(database).toContain("INSERT INTO");
+    expect(database).toContain("'Sistema de Notas do Módulo'");
+    expect(getArtifactFileName("database", { language: "python", metadata })).toBe(
+      "sistema_de_notas_do_modulo.sql",
+    );
+  });
+
+  test("treats grouping containers as code regions, never as steps", () => {
+    const code = generateCode(groupedDoc, {
+      language: "javascript",
+      blueprint: "procedural",
+      metadata,
+    });
+
+    // The container itself is never emitted as a callable step...
+    expect(code).not.toContain("Agrupador: Grupo 1");
+    expect(code).not.toContain("function step_group");
+    // ...but it now structures the generated code as a region wrapping its members.
+    expect(code).toContain("#region Grupo 1");
+    expect(code).toContain("#endregion");
+    expect(code).toContain("Executar etapa");
+    expect(code).toContain("FLOW_NAMESPACE");
+  });
+
+  test("uses technical node and group names for generated identifiers", () => {
+    const namedDoc: FlowDoc = {
+      nodes: [
+        node({
+          id: "group",
+          kind: "group",
+          label: "Camada de aplicação",
+          name: "ApplicationLayer",
+          w: 300,
+          h: 220,
+        }),
+        node({ id: "start", kind: "terminator", label: "Início", w: 140, h: 60 }),
+        node({
+          id: "menu",
+          kind: "display",
+          label: "Exibir menu inicial\n1 - Testar com 5 alunos\n0 - Sair",
+          name: "show main menu",
+          y: 90,
+        }),
+        node({ id: "end", kind: "terminator", label: "Fim", y: 180, w: 140, h: 60 }),
+      ],
+      edges: [edge("start", "menu"), edge("menu", "end")],
+    };
+
+    const code = generateCode(namedDoc, {
+      language: "javascript",
+      blueprint: "procedural",
+    });
+
+    expect(code).toContain("function step_2_show_main_menu");
+    expect(code).toContain("#region ApplicationLayer");
+    expect(code).toContain("Exibir menu inicial");
+  });
+
+  test("analyzes flow structure before code refinement", () => {
+    const reviewDoc: FlowDoc = {
+      nodes: [
+        node({
+          id: "group",
+          kind: "group",
+          label: "Camada de aplicação",
+          name: "ApplicationLayer",
+          w: 360,
+          h: 260,
+        }),
+        node({ id: "start", kind: "terminator", label: "Início", w: 140, h: 60 }),
+        node({ id: "check", kind: "decision", label: "Opção válida?", y: 90 }),
+        node({ id: "retry", kind: "process", label: "Exibir erro", y: 180 }),
+        node({ id: "end", kind: "terminator", label: "Fim", y: 270, w: 140, h: 60 }),
+        node({ id: "orphan", kind: "process", label: "Rascunho solto", x: 420, y: 90 }),
+      ],
+      edges: [
+        edge("start", "check"),
+        { ...edge("check", "retry", "Não"), kind: "return" },
+        edge("check", "end", "Sim"),
+      ],
+    };
+
+    const suggestions = analyzeFlowForCodeSuggestions(reviewDoc);
+
+    expect(suggestions.some((item) => item.title.includes("Agrupadores"))).toBe(true);
+    expect(suggestions.some((item) => item.title.includes("Laços"))).toBe(true);
+    expect(suggestions.some((item) => item.title.includes("fora do caminho"))).toBe(true);
+    expect(suggestions.some((item) => item.severity === "warning")).toBe(true);
   });
 });
