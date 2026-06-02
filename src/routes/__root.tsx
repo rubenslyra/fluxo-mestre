@@ -1,5 +1,6 @@
 import { Outlet, Link, createRootRoute, HeadContent, Scripts } from "@tanstack/react-router";
 
+import { PROJECT_LICENSE, PROJECT_VERSION } from "../projectLicense";
 import appCss from "../styles.css?url";
 
 const appBaseUrl = import.meta.env.BASE_URL.endsWith("/")
@@ -42,6 +43,10 @@ export const Route = createRootRoute({
       { name: "author", content: "Rubens Lyra" },
       { name: "creator", content: "Rubens Lyra - @rubinholyralabs" },
       { name: "publisher", content: "Rubens Lyra Labs" },
+      { name: "software-version", content: PROJECT_VERSION },
+      { name: "license", content: PROJECT_LICENSE.shortName },
+      { name: "license-url", content: PROJECT_LICENSE.url },
+      { name: "rights", content: PROJECT_LICENSE.commercialUse },
       { property: "og:title", content: "FluxoLab - Criador de Fluxogramas ISO 5807" },
       {
         property: "og:description",
@@ -72,6 +77,10 @@ export const Route = createRootRoute({
       {
         rel: "stylesheet",
         href: appCss,
+      },
+      {
+        rel: "license",
+        href: PROJECT_LICENSE.url,
       },
     ],
   }),

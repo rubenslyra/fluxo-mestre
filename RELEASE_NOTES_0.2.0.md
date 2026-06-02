@@ -1,93 +1,80 @@
-# FluxoLab v0.2.0 - Structured Control Flow with Typed Arrows & Auto-Curves
+# FluxoLab v0.2.0 - Fluxo estruturado e release comunitária
 
-## 🎯 Release Highlights
+Data: 2026-06-02
 
-Esta release implementa as **3 correções críticas** solicitadas no análise de engenheiro/arquiteto:
+Esta release consolida a evolução do FluxoLab depois da `v0.1.4`: editor mais preciso, geração de código orientada por fluxo estruturado, exportações com metadados, painel de boas práticas e limpeza profunda de dependências.
 
-### 1. ✅ **Setas e Tipos de Caminhos** (EdgeKind)
-- Categorização semântica: `default`, `true`, `false`, `loop`, `return`
-- Rótulos "Sim/Não" em decisões agora detectados automaticamente
-- Suporte a múltiplas saídas via `fromPort` (top, right, bottom, left)
+## Destaques
 
-**Arquivos**:
-- `src/components/flowchart/types.ts` — Novos tipos `EdgeKind` e `PortSide`
+### Setas tipadas e portas de conexão
 
-### 2. ✅ **Curvas Automáticas e Desfazimento de Cruzamentos**
-- Arestas paralelas (fan-out) curvas simetricamente para evitar tangling
-- Back-edges (loops, retornos) renderizados como arcos suaves (cubic Bézier)
-- Algoritmo `computeEdgeCurves()` que automatiza a separação visual
+- Arestas semânticas: `default`, `true`, `false`, `loop` e `return`.
+- Portas de conexão nos quatro lados dos nós.
+- Indicadores visuais menores para manter o canvas legível.
+- Suporte a reconectar arestas e manter caminhos pendentes intencionais.
 
-**Arquivos**:
-- `src/components/flowchart/geometry.ts` — `edgePath()` e `computeEdgeCurves()`
+### Curvas automáticas
 
-### 3. ✅ **Agrupador como Container Estruturado**
-- Novo módulo **`controlFlow.ts`** — IR de fluxo estruturado (if/while/seq)
-- Reconstrução automática de fluxo honrando:
-  - Loops detectados por back-edges
-  - Decisões em múltiplos caminhos
-  - Grupos como regiões semânticas
-  
-- Reescrita completa dos **5 geradores de código** (Python, C#, Java, JavaScript, C++):
-  - Agora emitem **controle de fluxo estruturado** (if/while real)
-  - Regiões de grupo comentadas (`#region Grupo1` / `// region Grupo1`)
-  - Grupos deixam de ser ignorados → moldam a saída
+- Separação visual de arestas paralelas e fan-out.
+- Rotas mais suaves para laços e retornos.
+- Endpoints livres incluídos no cálculo de limites e exportação.
 
-**Arquivos**:
-- `src/components/flowchart/controlFlow.ts` (novo)
-- `src/components/flowchart/codeBlueprints.ts` — Rewritten generators
+### Grupos e fluxo estruturado
 
-## 📊 Quality Metrics
+- Agrupadores tratados como regiões semânticas, não como passos executáveis.
+- Geração de código mais fiel a decisões, laços e regiões.
+- Saída para Python, C#, Java, JavaScript, C/C++, PlantUML e SQL.
 
-✅ **27 testes passando** (0 falhas)  
-✅ **Build sucesso** (Vite SSR + Bun)  
-✅ **Code size**: +487 insertions, -180 deletions (net ~307 lines)
+### Texto e exportação
 
-## 📦 Docker Image
+- Estilo de texto por nó: alinhamento, fonte, tamanho, entrelinha e listas.
+- Exportações SVG, PNG e PDF com melhor preservação de texto.
+- PDF com versão do sistema e licença comunitária.
 
-### Disponível em:
+### Documentação e licença
+
+- README reestruturado para uso, build, publicação e segurança.
+- Changelog atualizado para `0.2.0`.
+- Licença pública alinhada para `CC-BY-NC-SA-4.0`.
+- Aba "Boas Práticas" com documentação oficial e referências técnicas.
+
+## Limpeza
+
+- Removidos componentes UI que não eram importados pelo app.
+- Removidas dependências Radix/shadcn não utilizadas.
+- Removidos `package-lock.json`, `wrangler.jsonc` e imagens de exemplo pesadas.
+- Mantido apenas `@radix-ui/react-select`, usado pelo editor.
+
+## Validação
+
+```bash
+bun run test
+bunx tsc --noEmit
+bun run lint
+```
+
+Resultado esperado da release:
+
+- 36 testes passando.
+- TypeScript sem erros.
+- ESLint sem erros.
+
+## Docker
+
+Imagem esperada:
+
 ```bash
 docker pull rubenslyra/fluxolab:0.2.0
 docker pull rubenslyra/fluxolab:latest
 ```
 
-### Usar local:
+Execução local:
+
 ```bash
 docker run -p 3000:80 rubenslyra/fluxolab:0.2.0
-# Acesse em http://localhost:3000
 ```
 
-### Compose:
-```yaml
-services:
-  fluxolab:
-    image: rubenslyra/fluxolab:0.2.0
-    ports:
-      - "3000:80"
-    environment:
-      NODE_ENV: production
-    healthcheck:
-      test: ["CMD", "wget", "-q", "-O-", "http://127.0.0.1/healthz"]
-      interval: 30s
-      timeout: 3s
-      retries: 3
-```
+## Git
 
-## 🔄 Próximas Fases (Sugeridas)
-
-- [ ] UI para **colorir grupos** (color picker)
-- [ ] **Redimensionar grupos** (resize handles)
-- [ ] Inspecionadores de edge (edge kind + port dropdowns)
-- [ ] Validação avançada (detectar loops irreducíveis)
-- [ ] Exportação UML/SQL com mapping de grupos
-
-## 🔗 Referências
-
-- **Commit**: f065c27 (Estrutura de fluxo controlado...)
-- **Branch**: main
-- **Tag git**: (próxima: v0.2.0)
-
----
-
-**Preparado por**: Arquiteto & Engenheiro de Software  
-**Data**: 2026-05-29  
-**Status**: ✅ Pronto para produção
+- Tag local preparada: `v0.2.0`
+- Base anterior conhecida: `v0.1.4`
