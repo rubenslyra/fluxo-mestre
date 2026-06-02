@@ -68,6 +68,70 @@ describe("flowModel", () => {
     );
   });
 
+  test("allows corrective return edges back to a previous input", () => {
+    const doc: FlowDoc = {
+      nodes: [
+        node({ id: "input", kind: "manual" }),
+        node({ id: "check", kind: "decision" }),
+        node({ id: "error", kind: "display" }),
+      ],
+      edges: [edge("input", "check"), edge("check", "error", "Nao")],
+    };
+
+    expect(canConnectFlowNodes(doc, { from: "error", to: "input" })).toBe(true);
+
+    const connected = connectFlowNodes(doc, { id: "retry", from: "error", to: "input" });
+    expect(connected.edges.at(-1)?.id).toBe("retry");
+    expect(connected.edges.at(-1)?.from).toBe("error");
+    expect(connected.edges.at(-1)?.to).toBe("input");
+    expect(connected.edges.at(-1)?.kind).toBe("return");
+  });
+
+  test("connects a node to a free endpoint", () => {
+    const doc: FlowDoc = {
+      nodes: [node({ id: "input", kind: "manual" })],
+      edges: [],
+    };
+
+    expect(canConnectFlowNodes(doc, { from: "input", toPoint: { x: 240, y: 160 } })).toBe(true);
+
+    const connected = connectFlowNodes(doc, {
+      id: "free",
+      from: "input",
+      toPoint: { x: 240, y: 160 },
+    });
+    expect(connected.edges.at(-1)?.to).toBe(undefined);
+    expect(connected.edges.at(-1)?.toPoint).toEqual({ x: 240, y: 160 });
+  });
+
+  test("includes free endpoints in document bounds", () => {
+    expect(documentBounds([], 10, [{ x: 120, y: 80 }])).toEqual({
+      minX: 110,
+      minY: 70,
+      maxX: 130,
+      maxY: 90,
+      w: 20,
+      h: 20,
+    });
+  });
+
+  test("keeps explicit loop edge kind when connecting a cycle", () => {
+    const doc: FlowDoc = {
+      nodes: [node({ id: "loop-check", kind: "decision" }), node({ id: "advance" })],
+      edges: [edge("loop-check", "advance", "Sim")],
+    };
+
+    const connected = connectFlowNodes(doc, {
+      id: "loop-back",
+      from: "advance",
+      to: "loop-check",
+      kind: "loop",
+    });
+
+    expect(connected.edges.at(-1)?.id).toBe("loop-back");
+    expect(connected.edges.at(-1)?.kind).toBe("loop");
+  });
+
   test("moves only known nodes", () => {
     const doc: FlowDoc = {
       nodes: [node({ id: "a", x: 10, y: 10 }), node({ id: "b", x: 30, y: 30 })],

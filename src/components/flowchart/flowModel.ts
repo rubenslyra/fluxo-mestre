@@ -1,4 +1,4 @@
-import type { FlowDoc, FlowEdge, FlowNode } from "./types";
+import type { EdgeKind, FlowDoc, FlowEdge, FlowNode, FlowPoint } from "./types";
 
 export type Point = { x: number; y: number };
 export type SelectionBox = { startX: number; startY: number; x: number; y: number };
@@ -62,7 +62,32 @@ export function moveNodesTo(
   };
 }
 
-function hasPathBetween(doc: FlowDoc, from: string, to: string): boolean {
+type ConnectionDraft = Pick<FlowEdge, "from" | "label"> &
+  Partial<Pick<FlowEdge, "to" | "toPoint" | "kind" | "fromPort">>;
+
+type ConnectionOptions = {
+  forbidCycles?: boolean;
+  ignoreEdgeId?: string;
+};
+
+function normalizeConnectionOptions(
+  options: boolean | ConnectionOptions,
+): Required<ConnectionOptions> {
+  if (typeof options === "boolean") {
+    return { forbidCycles: options, ignoreEdgeId: "" };
+  }
+  return {
+    forbidCycles: options.forbidCycles ?? true,
+    ignoreEdgeId: options.ignoreEdgeId ?? "",
+  };
+}
+
+function hasPathBetween(
+  doc: FlowDoc,
+  from: string,
+  to: string,
+  options: Pick<ConnectionOptions, "ignoreEdgeId"> = {},
+): boolean {
   if (from === to) return true;
 
   const visited = new Set<string>();
@@ -75,28 +100,53 @@ function hasPathBetween(doc: FlowDoc, from: string, to: string): boolean {
     visited.add(current);
 
     doc.edges
-      .filter((e) => e.from === current)
+      .filter((e) => e.id !== options.ignoreEdgeId && e.from === current && e.to)
       .forEach((e) => {
-        if (!visited.has(e.to)) queue.push(e.to);
+        if (e.to && !visited.has(e.to)) queue.push(e.to);
       });
   }
   return false;
 }
 
+function inferEdgeKind(
+  doc: FlowDoc,
+  edge: Pick<FlowEdge, "from" | "kind"> & Partial<Pick<FlowEdge, "to">>,
+): EdgeKind | undefined {
+  if (edge.kind) return edge.kind;
+  if (!edge.to) return undefined;
+  return hasPathBetween(doc, edge.to, edge.from) ? "return" : undefined;
+}
+
+function allowsCycle(kind: EdgeKind | undefined) {
+  return kind === "loop" || kind === "return";
+}
+
+function isFinitePoint(point: FlowPoint | undefined): point is FlowPoint {
+  return Boolean(point && Number.isFinite(point.x) && Number.isFinite(point.y));
+}
+
 export function canConnectFlowNodes(
   doc: FlowDoc,
-  edge: Pick<FlowEdge, "from" | "to" | "label">,
-  forbidCycles: boolean = true,
+  edge: ConnectionDraft,
+  options: boolean | ConnectionOptions = true,
 ) {
-  if (edge.from === edge.to) return false;
+  const { forbidCycles, ignoreEdgeId } = normalizeConnectionOptions(options);
 
   const nodeIds = new Set(doc.nodes.map((node) => node.id));
-  if (!nodeIds.has(edge.from) || !nodeIds.has(edge.to)) return false;
+  if (!nodeIds.has(edge.from)) return false;
+
+  if (!edge.to) {
+    return isFinitePoint(edge.toPoint);
+  }
+
+  if (edge.from === edge.to) return false;
+  if (!nodeIds.has(edge.to)) return false;
 
   const normalizedLabel = edge.label?.trim() || undefined;
   if (
     doc.edges.some(
       (existing) =>
+        existing.id !== ignoreEdgeId &&
         existing.from === edge.from &&
         existing.to === edge.to &&
         (existing.label?.trim() || undefined) === normalizedLabel,
@@ -105,7 +155,12 @@ export function canConnectFlowNodes(
     return false;
   }
 
-  if (forbidCycles && hasPathBetween(doc, edge.to, edge.from)) {
+  const kind = inferEdgeKind(doc, edge);
+  if (
+    forbidCycles &&
+    !allowsCycle(kind) &&
+    hasPathBetween(doc, edge.to, edge.from, { ignoreEdgeId })
+  ) {
     return false;
   }
 
@@ -114,19 +169,32 @@ export function canConnectFlowNodes(
 
 export function connectFlowNodes(
   doc: FlowDoc,
-  edge: Pick<FlowEdge, "id" | "from" | "to" | "label">,
+  edge: Pick<FlowEdge, "id"> & ConnectionDraft,
 ): FlowDoc {
   if (!canConnectFlowNodes(doc, edge)) return doc;
   const normalizedLabel = edge.label?.trim() || undefined;
+  const kind = inferEdgeKind(doc, edge);
+  const toPoint = edge.to ? undefined : edge.toPoint;
 
   return {
     ...doc,
-    edges: [...doc.edges, { id: edge.id, from: edge.from, to: edge.to, label: normalizedLabel }],
+    edges: [
+      ...doc.edges,
+      {
+        id: edge.id,
+        from: edge.from,
+        to: edge.to,
+        toPoint,
+        label: normalizedLabel,
+        kind,
+        fromPort: edge.fromPort,
+      },
+    ],
   };
 }
 
-export function documentBounds(nodes: FlowNode[], padding = 40): Bounds {
-  if (nodes.length === 0) {
+export function documentBounds(nodes: FlowNode[], padding = 40, points: FlowPoint[] = []): Bounds {
+  if (nodes.length === 0 && points.length === 0) {
     return {
       minX: 0,
       minY: 0,
@@ -141,6 +209,12 @@ export function documentBounds(nodes: FlowNode[], padding = 40): Bounds {
   const ys = nodes.map((node) => node.y - node.h / 2);
   const xe = nodes.map((node) => node.x + node.w / 2);
   const ye = nodes.map((node) => node.y + node.h / 2);
+  points.forEach((point) => {
+    xs.push(point.x);
+    ys.push(point.y);
+    xe.push(point.x);
+    ye.push(point.y);
+  });
   const minX = Math.min(...xs) - padding;
   const minY = Math.min(...ys) - padding;
   const maxX = Math.max(...xe) + padding;

@@ -122,7 +122,7 @@ export function getShapePath(kind: SymbolKind, w: number, h: number): string {
       return `M ${x + r} ${y} H ${x + w - r} Q ${x + w} ${y} ${x + w} ${y + r} V ${y + h - r} Q ${x + w} ${y + h} ${x + w - r} ${y + h} H ${x + r} Q ${x} ${y + h} ${x} ${y + h - r} V ${y + r} Q ${x} ${y} ${x + r} ${y} Z`;
     }
     case "terminator": {
-      const r = h / 2;
+      const r = Math.min(w, h) / 2;
       return `M ${x + r} ${y} H ${x + w - r} A ${r} ${r} 0 0 1 ${x + w - r} ${y + h} H ${x + r} A ${r} ${r} 0 0 1 ${x + r} ${y} Z`;
     }
     case "process":
@@ -154,8 +154,9 @@ export function getShapePath(kind: SymbolKind, w: number, h: number): string {
       return `M ${x + curve} ${y} H ${x + w - curve} L ${x + w} 0 L ${x + w - curve} ${y + h} H ${x + curve} Q ${x - curve / 2} 0 ${x + curve} ${y} Z`;
     }
     case "connector": {
-      const r = Math.min(w, h) / 2;
-      return `M ${-r} 0 A ${r} ${r} 0 1 0 ${r} 0 A ${r} ${r} 0 1 0 ${-r} 0 Z`;
+      const rx = w / 2;
+      const ry = h / 2;
+      return `M ${-rx} 0 A ${rx} ${ry} 0 1 0 ${rx} 0 A ${rx} ${ry} 0 1 0 ${-rx} 0 Z`;
     }
   }
 }

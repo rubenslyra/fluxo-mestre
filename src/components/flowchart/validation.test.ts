@@ -95,6 +95,21 @@ describe("validateFlow", () => {
     expect(messages(doc)).toContain("Conexão duplicada (start→end)");
   });
 
+  test("allows an intentionally dangling edge to a free point", () => {
+    const doc: FlowDoc = {
+      nodes: [
+        node({ id: "start", kind: "terminator", label: "Inicio" }),
+        node({ id: "input", kind: "manual", label: "Ler dados" }),
+        node({ id: "end", kind: "terminator", label: "Fim" }),
+      ],
+      edges: [edge("start", "input"), { id: "free", from: "input", toPoint: { x: 240, y: 120 } }],
+    };
+
+    const result = messages(doc);
+    expect(result).not.toContain("Conexão inconsistente (input→ponto livre)");
+    expect(result).not.toContain('"Ler dados" não tem saída');
+  });
+
   test("ignores agrupador nodes for structural validation", () => {
     const doc: FlowDoc = {
       nodes: [

@@ -38,16 +38,32 @@ export function validateFlow(doc: FlowDoc): Issue[] {
   if (!hasEnd) issues.push({ level: "error", msg: "Falta um símbolo Terminal de Fim" });
 
   const ids = new Set(flowNodes.map((n) => n.id));
-  const validEdges = doc.edges.filter((e) => ids.has(e.from) && ids.has(e.to) && e.from !== e.to);
+  const validEdges = doc.edges.filter(
+    (e) => e.to && ids.has(e.from) && ids.has(e.to) && e.from !== e.to,
+  );
+  const danglingEdges = doc.edges.filter(
+    (e) =>
+      ids.has(e.from) &&
+      !e.to &&
+      e.toPoint &&
+      Number.isFinite(e.toPoint.x) &&
+      Number.isFinite(e.toPoint.y),
+  );
+  const routableEdges = [...validEdges, ...danglingEdges];
   const invalidEdges = doc.edges.filter(
-    (e) => !ids.has(e.from) || !ids.has(e.to) || e.from === e.to,
+    (e) =>
+      !ids.has(e.from) || (e.to ? !ids.has(e.to) || e.from === e.to : !danglingEdges.includes(e)),
   );
   invalidEdges.forEach((e) => {
-    issues.push({ level: "error", msg: `Conexão inconsistente (${e.from}→${e.to})` });
+    issues.push({
+      level: "error",
+      msg: `Conexão inconsistente (${e.from}→${e.to ?? "ponto livre"})`,
+    });
   });
 
   const seenEdges = new Set<string>();
   validEdges.forEach((e) => {
+    if (!e.to) return;
     const key = `${e.from}\0${e.to}\0${normalizedEdgeLabel(e.label)}`;
     if (seenEdges.has(key)) {
       issues.push({ level: "warning", msg: `Conexão duplicada (${e.from}→${e.to})` });
@@ -66,10 +82,14 @@ export function validateFlow(doc: FlowDoc): Issue[] {
     reverseAdjacency.set(n.id, []);
   });
   validEdges.forEach((e) => {
+    if (!e.to) return;
     incoming.set(e.to, (incoming.get(e.to) ?? 0) + 1);
     outgoing.set(e.from, (outgoing.get(e.from) ?? 0) + 1);
     adjacency.get(e.from)!.push(e.to);
     reverseAdjacency.get(e.to)!.push(e.from);
+  });
+  danglingEdges.forEach((e) => {
+    outgoing.set(e.from, (outgoing.get(e.from) ?? 0) + 1);
   });
 
   const locallyBroken = new Set<string>();
@@ -89,7 +109,7 @@ export function validateFlow(doc: FlowDoc): Issue[] {
       locallyBroken.add(n.id);
     }
     if (n.kind === "decision") {
-      const labels = validEdges
+      const labels = routableEdges
         .filter((e) => e.from === n.id)
         .map((e) => (e.label ?? "").trim().toLowerCase());
       if (labels.length < 2) {

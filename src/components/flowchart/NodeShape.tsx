@@ -1,5 +1,6 @@
 import { SYMBOLS, getShapePath, type SymbolKind } from "./symbols";
-import type { FlowNode } from "./types";
+import { CSS_FONT_FAMILY, formatNodeTextLines, nodeTextBox, resolveTextStyle } from "./textStyle";
+import type { FlowNode, ResizeHandle } from "./types";
 
 interface NodeShapeProps {
   node: FlowNode;
@@ -8,7 +9,7 @@ interface NodeShapeProps {
   onDoubleClick?: (e: React.MouseEvent) => void;
   onPortMouseDown?: (port: "out", e: React.MouseEvent) => void;
   onPortMouseUp?: () => void;
-  onResizeHandleMouseDown?: (handle: string, e: React.MouseEvent) => void;
+  onResizeHandleMouseDown?: (handle: ResizeHandle, e: React.MouseEvent) => void;
 }
 
 export function NodeShape({
@@ -21,8 +22,17 @@ export function NodeShape({
   onResizeHandleMouseDown,
 }: NodeShapeProps) {
   const path = getShapePath(node.kind, node.w, node.h);
-  const isDecision = node.kind === "decision";
   const isGroup = node.kind === "group";
+  const canResize = Boolean(selected && onResizeHandleMouseDown);
+  const textStyle = resolveTextStyle(node);
+  const textBox = nodeTextBox(node);
+  const textLines = formatNodeTextLines(node.label, textStyle.listStyle);
+  const justifyContent =
+    textStyle.align === "left" ? "flex-start" : textStyle.align === "right" ? "flex-end" : "center";
+  const title = textLines
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .join(" ");
 
   return (
     <g
@@ -58,20 +68,44 @@ export function NodeShape({
             opacity={0.65}
             pointerEvents="none"
           />
-          {selected && (
-            <>
-              {/* Corner handles */}
-              <ResizeHandle cx={-node.w / 2 - 6} cy={-node.h / 2 - 6} handle="nw" onMouseDown={onResizeHandleMouseDown} />
-              <ResizeHandle cx={node.w / 2 + 6} cy={-node.h / 2 - 6} handle="ne" onMouseDown={onResizeHandleMouseDown} />
-              <ResizeHandle cx={node.w / 2 + 6} cy={node.h / 2 + 6} handle="se" onMouseDown={onResizeHandleMouseDown} />
-              <ResizeHandle cx={-node.w / 2 - 6} cy={node.h / 2 + 6} handle="sw" onMouseDown={onResizeHandleMouseDown} />
-              {/* Side handles */}
-              <ResizeHandle cx={0} cy={-node.h / 2 - 6} handle="n" onMouseDown={onResizeHandleMouseDown} />
-              <ResizeHandle cx={node.w / 2 + 6} cy={0} handle="e" onMouseDown={onResizeHandleMouseDown} />
-              <ResizeHandle cx={0} cy={node.h / 2 + 6} handle="s" onMouseDown={onResizeHandleMouseDown} />
-              <ResizeHandle cx={-node.w / 2 - 6} cy={0} handle="w" onMouseDown={onResizeHandleMouseDown} />
-            </>
-          )}
+          <foreignObject
+            x={textBox.x}
+            y={textBox.y}
+            width={textBox.w}
+            height={textBox.h}
+            pointerEvents="none"
+          >
+            <div
+              style={{
+                width: "100%",
+                height: "100%",
+                display: "flex",
+                alignItems: "center",
+                justifyContent,
+                overflow: "hidden",
+                userSelect: "none",
+              }}
+            >
+              <span
+                style={{
+                  maxWidth: "100%",
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                  borderRadius: 4,
+                  background: "var(--color-background)",
+                  padding: "0 8px",
+                  color: "var(--color-foreground)",
+                  fontFamily: CSS_FONT_FAMILY[textStyle.fontFamily],
+                  fontSize: textStyle.fontSize,
+                  fontWeight: 700,
+                  lineHeight: textStyle.lineHeight,
+                }}
+              >
+                {title || node.name || "Grupo"}
+              </span>
+            </div>
+          </foreignObject>
         </>
       ) : (
         <path
@@ -81,33 +115,41 @@ export function NodeShape({
           strokeWidth={selected ? 3 : 2}
         />
       )}
-      <foreignObject
-        x={-node.w / 2 + 8}
-        y={isGroup ? -node.h / 2 + 8 : -node.h / 2 + 4}
-        width={node.w - 16}
-        height={isGroup ? node.h - 16 : node.h - 8}
-      >
-        <div
-          style={{
-            width: "100%",
-            height: "100%",
-            display: "flex",
-            alignItems: isGroup ? "center" : "center",
-            justifyContent: isGroup ? "flex-start" : "center",
-            textAlign: "center",
-            fontSize: isGroup ? 12 : 13,
-            fontWeight: isGroup ? 700 : 400,
-            color: "var(--color-foreground)",
-            fontFamily: "var(--font-display)",
-            wordBreak: "break-word",
-            lineHeight: isGroup ? 1.18 : 1.2,
-            userSelect: "none",
-            paddingTop: isGroup ? 10 : 0,
-          }}
+      {!isGroup && (
+        <foreignObject
+          x={textBox.x}
+          y={textBox.y}
+          width={textBox.w}
+          height={textBox.h}
+          pointerEvents="none"
         >
-          {node.label}
-        </div>
-      </foreignObject>
+          <div
+            style={{
+              width: "100%",
+              height: "100%",
+              display: "flex",
+              alignItems: "center",
+              justifyContent,
+              overflow: "hidden",
+              textAlign: textStyle.align,
+              fontSize: textStyle.fontSize,
+              fontWeight: 400,
+              color: "var(--color-foreground)",
+              fontFamily: CSS_FONT_FAMILY[textStyle.fontFamily],
+              lineHeight: textStyle.lineHeight,
+              userSelect: "none",
+            }}
+          >
+            <div style={{ width: "100%", maxHeight: "100%", overflow: "hidden" }}>
+              {textLines.map((line, index) => (
+                <div key={`${index}-${line}`} style={{ minHeight: "1em", wordBreak: "break-word" }}>
+                  {line || "\u00a0"}
+                </div>
+              ))}
+            </div>
+          </div>
+        </foreignObject>
+      )}
 
       {/* In hover area */}
       <rect
@@ -132,7 +174,47 @@ export function NodeShape({
           <PortDot cx={-node.w / 2} cy={0} onMouseDown={(e) => onPortMouseDown?.("out", e)} />
         </>
       )}
+
+      {canResize && (
+        <ResizeHandles width={node.w} height={node.h} onMouseDown={onResizeHandleMouseDown} />
+      )}
     </g>
+  );
+}
+
+function ResizeHandles({
+  width,
+  height,
+  onMouseDown,
+}: {
+  width: number;
+  height: number;
+  onMouseDown?: (handle: ResizeHandle, e: React.MouseEvent) => void;
+}) {
+  const offset = 14;
+  const points: Array<{ handle: ResizeHandle; cx: number; cy: number }> = [
+    { handle: "nw", cx: -width / 2 - offset, cy: -height / 2 - offset },
+    { handle: "n", cx: 0, cy: -height / 2 - offset },
+    { handle: "ne", cx: width / 2 + offset, cy: -height / 2 - offset },
+    { handle: "e", cx: width / 2 + offset, cy: 0 },
+    { handle: "se", cx: width / 2 + offset, cy: height / 2 + offset },
+    { handle: "s", cx: 0, cy: height / 2 + offset },
+    { handle: "sw", cx: -width / 2 - offset, cy: height / 2 + offset },
+    { handle: "w", cx: -width / 2 - offset, cy: 0 },
+  ];
+
+  return (
+    <>
+      {points.map((point) => (
+        <ResizeHandle
+          key={point.handle}
+          cx={point.cx}
+          cy={point.cy}
+          handle={point.handle}
+          onMouseDown={onMouseDown}
+        />
+      ))}
+    </>
   );
 }
 
@@ -144,15 +226,16 @@ function ResizeHandle({
 }: {
   cx: number;
   cy: number;
-  handle: string;
-  onMouseDown?: (handle: string, e: React.MouseEvent) => void;
+  handle: ResizeHandle;
+  onMouseDown?: (handle: ResizeHandle, e: React.MouseEvent) => void;
 }) {
   const handleMouseDown = (e: React.MouseEvent) => {
+    e.preventDefault();
     e.stopPropagation();
     onMouseDown?.(handle, e);
   };
 
-  const cursorMap: Record<string, string> = {
+  const cursorMap: Record<ResizeHandle, string> = {
     nw: "nwse-resize",
     n: "ns-resize",
     ne: "nesw-resize",

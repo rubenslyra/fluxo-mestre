@@ -30,6 +30,10 @@ describe("generateLocalFlowchart", () => {
       expect(doc.edges.some((edge) => edge.to === input.id)).toBe(true);
       expect(doc.edges.some((edge) => edge.from === input.id)).toBe(true);
     }
+    const manualInputIds = new Set(manualInputs.map((input) => input.id));
+    expect(
+      doc.edges.some((edge) => edge.kind === "return" && edge.to && manualInputIds.has(edge.to)),
+    ).toBe(true);
     expect(validateFlow(doc)).toEqual([]);
   });
 

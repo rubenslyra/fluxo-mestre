@@ -90,6 +90,7 @@ export function layoutGeneratedFlow(gen: GeneratedFlow): FlowDoc {
     from: e.from,
     to: e.to,
     label: e.label,
+    kind: e.kind,
   }));
 
   return { nodes, edges: flowEdges };

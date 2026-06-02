@@ -25,6 +25,14 @@ export interface GenerateArtifactOptions {
   metadata: GenerationMetadata;
 }
 
+export type CodeSuggestionSeverity = "success" | "info" | "warning";
+
+export type CodeSuggestion = {
+  title: string;
+  detail: string;
+  severity: CodeSuggestionSeverity;
+};
+
 export const CODE_LANGUAGES: Array<{ id: CodeLanguage; label: string; fileName: string }> = [
   { id: "python", label: "Python", fileName: "fluxolab_flow.py" },
   { id: "csharp", label: "C#", fileName: "FluxoLabFlow.cs" },
@@ -174,6 +182,137 @@ export function getArtifactFileName(
   return `${base}.cpp`;
 }
 
+export function analyzeFlowForCodeSuggestions(doc: FlowDoc): CodeSuggestion[] {
+  const nodes = doc.nodes.filter((node) => node.kind !== "group");
+  const groups = doc.nodes.filter((node) => node.kind === "group");
+  const connectedTargetIds = new Set(doc.edges.flatMap((edge) => (edge.to ? [edge.to] : [])));
+  const connectedSourceIds = new Set(doc.edges.map((edge) => edge.from));
+  const danglingEdges = doc.edges.filter((edge) => !edge.to).length;
+  const decisions = nodes.filter((node) => node.kind === "decision");
+  const loopEdges = doc.edges.filter((edge) => edge.kind === "loop" || edge.kind === "return");
+  const namedNodes = nodes.filter((node) => node.name?.trim());
+  const namedGroups = groups.filter((node) => node.name?.trim());
+  const nonTerminalNodes = nodes.filter((node) => node.kind !== "terminator");
+  const disconnectedNodes = nodes.filter(
+    (node) => !connectedSourceIds.has(node.id) && !connectedTargetIds.has(node.id),
+  );
+  const decisionOutcomeCount = new Map<string, Set<string>>();
+
+  for (const edge of doc.edges) {
+    if (!edge.label || !decisions.some((node) => node.id === edge.from)) continue;
+    const outcomes = decisionOutcomeCount.get(edge.from) ?? new Set<string>();
+    outcomes.add(edge.label.trim().toLowerCase());
+    decisionOutcomeCount.set(edge.from, outcomes);
+  }
+
+  const suggestions: CodeSuggestion[] = [];
+
+  if (nodes.length === 0) {
+    return [
+      {
+        title: "Modele pelo menos um fluxo executável",
+        detail:
+          "Os agrupadores ajudam a organizar arquitetura, mas o gerador precisa de símbolos de início, processo, decisão ou fim para criar código.",
+        severity: "warning",
+      },
+    ];
+  }
+
+  if (groups.length > 0) {
+    suggestions.push({
+      title: "Agrupadores prontos para virar módulos",
+      detail:
+        namedGroups.length === groups.length
+          ? "Os nomes técnicos dos agrupadores podem orientar camadas, casos de uso, bounded contexts ou módulos no próximo refinamento."
+          : "Preencha o nome técnico dos agrupadores principais para transformar grupos visuais em nomes de módulos, camadas ou contextos.",
+      severity: namedGroups.length === groups.length ? "success" : "info",
+    });
+  } else if (nodes.length >= 6) {
+    suggestions.push({
+      title: "Considere separar responsabilidades",
+      detail:
+        "Fluxos com muitos passos ficam mais fáceis de evoluir quando partes coesas são colocadas em agrupadores nomeados.",
+      severity: "info",
+    });
+  }
+
+  if (namedNodes.length < Math.min(nonTerminalNodes.length, 3)) {
+    suggestions.push({
+      title: "Use nomes técnicos nos passos centrais",
+      detail:
+        "O rótulo continua livre para explicar a regra no desenho; o nome técnico melhora métodos, constantes e classes geradas.",
+      severity: "info",
+    });
+  }
+
+  if (decisions.length >= 2) {
+    suggestions.push({
+      title: "Decisões indicam políticas de negócio",
+      detail:
+        "Com duas ou mais decisões, Strategy ou Template Method tendem a deixar regras substituíveis sem misturar a leitura do fluxo.",
+      severity: "info",
+    });
+  } else if (decisions.length === 1) {
+    suggestions.push({
+      title: "Decisão simples detectada",
+      detail:
+        "Um blueprint procedural limpo costuma ser suficiente; rotule as saídas Sim/Não para preservar a intenção no código.",
+      severity: "success",
+    });
+  }
+
+  const decisionsWithTwoOutcomes = decisions.filter((node) => {
+    const outcomes = decisionOutcomeCount.get(node.id);
+    return outcomes && outcomes.size >= 2;
+  }).length;
+  if (decisions.length > 0 && decisionsWithTwoOutcomes < decisions.length) {
+    suggestions.push({
+      title: "Complete os rótulos das decisões",
+      detail:
+        "Cada losango deve ter saídas identificáveis. Isso melhora a leitura do PlantUML, dos testes e dos comentários gerados.",
+      severity: "warning",
+    });
+  }
+
+  if (loopEdges.length > 0) {
+    suggestions.push({
+      title: "Laços exigem condição de parada",
+      detail:
+        "Há conexões de retorno no fluxo. Revise inicialização, incremento e caminho de saída antes de transformar em código final.",
+      severity: "warning",
+    });
+  }
+
+  if (danglingEdges > 0) {
+    suggestions.push({
+      title: "Conexões soltas não entram no artefato",
+      detail:
+        "Setas ainda não conectadas a um símbolo são ignoradas pela geração. Feche essas conexões antes da release do fluxo.",
+      severity: "warning",
+    });
+  }
+
+  if (disconnectedNodes.length > 0) {
+    suggestions.push({
+      title: "Há símbolos fora do caminho principal",
+      detail:
+        "Símbolos isolados aparecem como passos soltos. Conecte-os, coloque-os em agrupador de apoio ou remova se forem apenas anotação.",
+      severity: "warning",
+    });
+  }
+
+  if (suggestions.length === 0) {
+    suggestions.push({
+      title: "Fluxo pronto para refinamento",
+      detail:
+        "A estrutura atual já possui passos conectados e pode ser refinada por linguagem, blueprint e testes de regra de negócio.",
+      severity: "success",
+    });
+  }
+
+  return suggestions;
+}
+
 // Spatial containment: a flow node belongs to the smallest group whose box covers its center.
 function assignGroups(doc: FlowDoc): Map<string, { id: string; name: string }> {
   const groups = doc.nodes.filter((node) => node.kind === "group");
@@ -200,7 +339,7 @@ function assignGroups(doc: FlowDoc): Map<string, { id: string; name: string }> {
     if (best) {
       membership.set(node.id, {
         id: best.id,
-        name: best.label.trim() || SYMBOLS.group.defaultLabel,
+        name: best.name?.trim() || best.label.trim() || SYMBOLS.group.defaultLabel,
       });
     }
   }
@@ -211,11 +350,7 @@ function findStartNodeId(nodes: FlowNode[]) {
   const start = nodes.find(
     (node) =>
       node.kind === "terminator" &&
-      node.label
-        .normalize("NFD")
-        .replace(/[̀-ͯ]/g, "")
-        .toLowerCase()
-        .includes("inicio"),
+      node.label.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase().includes("inicio"),
   );
   return (start ?? nodes[0])?.id;
 }
@@ -224,19 +359,20 @@ function createCodeModel(doc: FlowDoc, metadata?: Partial<GenerationMetadata>): 
   const normalizedMetadata = normalizeMetadata(metadata, doc);
   const flowDoc = {
     nodes: doc.nodes.filter((node) => node.kind !== "group"),
-    edges: doc.edges,
+    edges: doc.edges.flatMap((edge) => (edge.to ? [{ ...edge, to: edge.to }] : [])),
   };
   const membership = assignGroups(doc);
   const orderedNodes = orderNodes(flowDoc);
   const steps: CodeStep[] = orderedNodes.map((node, index) => {
     const label = node.label.trim() || SYMBOLS[node.kind].defaultLabel;
+    const technicalName = node.name?.trim() || label;
     return {
       nodeId: node.id,
       index: index + 1,
       label,
       kindName: SYMBOLS[node.kind].name,
-      methodName: makeIdentifier(`${index + 1}_${label}`),
-      constantName: makeConstant(`${index + 1}_${label}`),
+      methodName: makeIdentifier(`${index + 1}_${technicalName}`),
+      constantName: makeConstant(`${index + 1}_${technicalName}`),
       isDecision: node.kind === "decision",
       groupName: membership.get(node.id)?.name,
     };
@@ -279,7 +415,7 @@ function createCodeModel(doc: FlowDoc, metadata?: Partial<GenerationMetadata>): 
     decisions: steps.filter((step) => step.isDecision),
     transitions: flowDoc.edges.flatMap((edge) => {
       const from = stepsByNodeId.get(edge.from);
-      const to = stepsByNodeId.get(edge.to);
+      const to = edge.to ? stepsByNodeId.get(edge.to) : undefined;
       return from && to ? [{ from, to, label: edge.label }] : [];
     }),
     controlFlow,
@@ -293,6 +429,7 @@ function orderNodes(doc: FlowDoc) {
   const byId = new Map(doc.nodes.map((node) => [node.id, node]));
   const outgoing = new Map<string, string[]>();
   for (const edge of doc.edges) {
+    if (!edge.to) continue;
     const list = outgoing.get(edge.from) ?? [];
     list.push(edge.to);
     outgoing.set(edge.from, list);
@@ -470,12 +607,7 @@ function renderControlFlow(model: CodeModel, em: FlowEmitter): string {
   const stepOf = (id: string) => model.stepsByNodeId.get(id);
   const negate = (cond: string) => (em.braces ? `!(${cond})` : `not (${cond})`);
 
-  const block = (
-    tree: CFNode[],
-    level: number,
-    opener: string,
-    trailingComment?: string,
-  ) => {
+  const block = (tree: CFNode[], level: number, opener: string, trailingComment?: string) => {
     lines.push(ind(level) + opener + (trailingComment ? `  ${em.comment} ${trailingComment}` : ""));
     const before = lines.length;
     walk(tree, level + 1);
@@ -512,12 +644,7 @@ function renderControlFlow(model: CodeModel, em: FlowEmitter): string {
       if (node.type === "if") {
         const step = stepOf(node.id);
         const cond = step ? em.condExpr(step) : em.braces ? "true" : "True";
-        block(
-          node.then,
-          level,
-          em.braces ? `if (${cond}) {` : `if ${cond}:`,
-          node.thenLabel,
-        );
+        block(node.then, level, em.braces ? `if (${cond}) {` : `if ${cond}:`, node.thenLabel);
         if (node.else.length) {
           // Reuse the closing of the then-block as the else opener for brace languages.
           if (em.braces) lines[lines.length - 1] = ind(level) + "} else {";

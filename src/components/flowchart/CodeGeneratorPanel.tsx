@@ -6,6 +6,7 @@ import {
   CODE_BLUEPRINTS,
   CODE_LANGUAGES,
   CODE_REFERENCE_LINKS,
+  analyzeFlowForCodeSuggestions,
   generateArtifact,
   getArtifactFileName,
   type ArtifactKind,
@@ -25,6 +26,12 @@ const ARTIFACT_ICONS = {
   uml: Workflow,
   database: Database,
 } satisfies Record<ArtifactKind, typeof Code2>;
+
+const SUGGESTION_STYLE = {
+  success: "border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300",
+  info: "border-sky-500/35 bg-sky-500/10 text-sky-700 dark:text-sky-300",
+  warning: "border-amber-500/45 bg-amber-500/10 text-amber-700 dark:text-amber-300",
+};
 
 export function CodeGeneratorPanel({ doc, open, onClose }: CodeGeneratorPanelProps) {
   const [artifact, setArtifact] = useState<ArtifactKind>("code");
@@ -61,6 +68,7 @@ export function CodeGeneratorPanel({ doc, open, onClose }: CodeGeneratorPanelPro
   const selectedLanguage = CODE_LANGUAGES.find((item) => item.id === language) ?? CODE_LANGUAGES[0];
   const selectedArtifact =
     ARTIFACT_TARGETS.find((item) => item.id === artifact) ?? ARTIFACT_TARGETS[0];
+  const codeSuggestions = useMemo(() => analyzeFlowForCodeSuggestions(doc), [doc]);
 
   if (!open) return null;
 
@@ -218,6 +226,25 @@ export function CodeGeneratorPanel({ doc, open, onClose }: CodeGeneratorPanelPro
                   <span className="mt-1 block text-xs text-muted-foreground">{item.summary}</span>
                 </button>
               ))}
+            </div>
+
+            <div className="mt-5 rounded-md border border-border bg-muted/30 p-3">
+              <p className="mb-2 text-[11px] font-bold uppercase tracking-widest text-muted-foreground">
+                Sugestões pelo fluxograma
+              </p>
+              <div className="space-y-2">
+                {codeSuggestions.map((item) => (
+                  <div
+                    key={`${item.severity}-${item.title}`}
+                    className={`rounded-md border p-2 ${SUGGESTION_STYLE[item.severity]}`}
+                  >
+                    <p className="text-xs font-semibold">{item.title}</p>
+                    <p className="mt-1 text-[11px] leading-relaxed text-foreground/80">
+                      {item.detail}
+                    </p>
+                  </div>
+                ))}
+              </div>
             </div>
 
             <div className="mt-5 rounded-md border border-border bg-muted/40 p-3">

@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
   CODE_BLUEPRINTS,
   CODE_LANGUAGES,
+  analyzeFlowForCodeSuggestions,
   generateArtifact,
   generateCode,
   getArtifactFileName,
@@ -348,5 +349,71 @@ describe("generateCode", () => {
     expect(code).toContain("#endregion");
     expect(code).toContain("Executar etapa");
     expect(code).toContain("FLOW_NAMESPACE");
+  });
+
+  test("uses technical node and group names for generated identifiers", () => {
+    const namedDoc: FlowDoc = {
+      nodes: [
+        node({
+          id: "group",
+          kind: "group",
+          label: "Camada de aplicação",
+          name: "ApplicationLayer",
+          w: 300,
+          h: 220,
+        }),
+        node({ id: "start", kind: "terminator", label: "Início", w: 140, h: 60 }),
+        node({
+          id: "menu",
+          kind: "display",
+          label: "Exibir menu inicial\n1 - Testar com 5 alunos\n0 - Sair",
+          name: "show main menu",
+          y: 90,
+        }),
+        node({ id: "end", kind: "terminator", label: "Fim", y: 180, w: 140, h: 60 }),
+      ],
+      edges: [edge("start", "menu"), edge("menu", "end")],
+    };
+
+    const code = generateCode(namedDoc, {
+      language: "javascript",
+      blueprint: "procedural",
+    });
+
+    expect(code).toContain("function step_2_show_main_menu");
+    expect(code).toContain("#region ApplicationLayer");
+    expect(code).toContain("Exibir menu inicial");
+  });
+
+  test("analyzes flow structure before code refinement", () => {
+    const reviewDoc: FlowDoc = {
+      nodes: [
+        node({
+          id: "group",
+          kind: "group",
+          label: "Camada de aplicação",
+          name: "ApplicationLayer",
+          w: 360,
+          h: 260,
+        }),
+        node({ id: "start", kind: "terminator", label: "Início", w: 140, h: 60 }),
+        node({ id: "check", kind: "decision", label: "Opção válida?", y: 90 }),
+        node({ id: "retry", kind: "process", label: "Exibir erro", y: 180 }),
+        node({ id: "end", kind: "terminator", label: "Fim", y: 270, w: 140, h: 60 }),
+        node({ id: "orphan", kind: "process", label: "Rascunho solto", x: 420, y: 90 }),
+      ],
+      edges: [
+        edge("start", "check"),
+        { ...edge("check", "retry", "Não"), kind: "return" },
+        edge("check", "end", "Sim"),
+      ],
+    };
+
+    const suggestions = analyzeFlowForCodeSuggestions(reviewDoc);
+
+    expect(suggestions.some((item) => item.title.includes("Agrupadores"))).toBe(true);
+    expect(suggestions.some((item) => item.title.includes("Laços"))).toBe(true);
+    expect(suggestions.some((item) => item.title.includes("fora do caminho"))).toBe(true);
+    expect(suggestions.some((item) => item.severity === "warning")).toBe(true);
   });
 });
